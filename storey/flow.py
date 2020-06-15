@@ -1,3 +1,17 @@
+# Copyright 2020 Iguazio
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import asyncio
 import json
 import os
@@ -34,11 +48,15 @@ class Flow:
         if element is _termination_obj:
             termination_result = await self._outlets[0].do(_termination_obj)
             for i in range(1, len(self._outlets)):
-                termination_result = self._termination_result_fn(termination_result, await self._outlets[i].do(_termination_obj))
+                termination_result = self._termination_result_fn(
+                    termination_result,
+                    await self._outlets[i].do(_termination_obj))
             return termination_result
         tasks = []
         for i in range(len(self._outlets)):
-            tasks.append(asyncio.get_running_loop().create_task(self._outlets[i].do(element)))
+            tasks.append(
+                asyncio.get_running_loop().create_task(
+                    self._outlets[i].do(element)))
         for task in tasks:
             await task
 
@@ -91,7 +109,7 @@ class Source(Flow):
 
     def _raise_on_error(self, ex):
         if ex:
-            raise FlowException('Flow execution terminated due to an error') from self._ex
+            raise FlowException('execution error') from self._ex
 
     def _emit(self, element):
         self._raise_on_error(self._ex)
@@ -108,7 +126,8 @@ class Source(Flow):
             self._raise_on_error(self._termination_q.get())
             return self._termination_future.result()
 
-        return FlowController(self._emit, raise_error_or_return_termination_result)
+        return FlowController(
+            self._emit, raise_error_or_return_termination_result)
 
 
 class UnaryFunctionFlow(Flow):
@@ -161,7 +180,7 @@ class Reduce(Flow):
         self._result = inital_value
 
     def to(self, outlet):
-        raise Exception("Reduce is a terminal step. It cannot be piped further.")
+        raise Exception("Non-terminal Reduce")
 
     async def do(self, element):
         if element is _termination_obj:
@@ -177,16 +196,18 @@ class NeedsV3ioAccess:
     def __init__(self, webapi=None, access_key=None):
         if not webapi:
             webapi = os.getenv('V3IO_API')
-        assert webapi, 'Missing webapi parameter or V3IO_API environment variable'
+            if webapi is None:
+                raise ValueError('webapi or V3IO_API must be set')
 
-        if not webapi.startswith('http://') and not webapi.startswith('https://'):
+        if not re.match(r'http(s)?://', webapi):
             webapi = f'http://{webapi}'
 
         self._webapi_url = webapi
 
         if not access_key:
             access_key = os.getenv('V3IO_ACCESS_KEY')
-        assert access_key, 'Missing access_key parameter or V3IO_ACCESS_KEY environment variable'
+            if access_key is None:
+                raise ValueError('access_key or V3IO_ACCESS_KEY must be set')
 
         self._get_item_headers = {
             'X-v3io-function': 'GetItem',
@@ -197,7 +218,9 @@ class NeedsV3ioAccess:
 class JoinWithTable(Flow, NeedsV3ioAccess):
     _non_int_char_pattern = re.compile(r"[^-0-9]")
 
-    def __init__(self, key_extractor, join_function, table_path, attributes='*', webapi=None, access_key=None, **kwargs):
+    def __init__(
+        self, key_extractor, join_function, table_path, attributes='*',
+            webapi=None, access_key=None, **kwargs):
         Flow.__init__(self, **kwargs)
         NeedsV3ioAccess.__init__(self, webapi, access_key)
         self._key_extractor = key_extractor
@@ -220,7 +243,7 @@ class JoinWithTable(Flow, NeedsV3ioAccess):
                     else:
                         val = int(value)
                 else:
-                    raise Exception(f'Type {typ} in get item response is not supported')
+                    raise Exception(f'Unsupported type: {typ!r}')
             response_object[name] = val
         return response_object
 
@@ -240,9 +263,12 @@ class JoinWithTable(Flow, NeedsV3ioAccess):
                 elif response.status == 404:
                     pass
                 else:
-                    raise Exception(f'Failed to get item. Response status code was {response.status}: {response_body}')
+                    raise Exception(
+                        'get item. status code - '
+                        f'{response.status}: {response_body}')
                 if response_object:
-                    joined_element = self._join_function(element, response_object)
+                    joined_element = self._join_function(
+                            element, response_object)
                     await self._do_downstream(joined_element)
         except BaseException as ex:
             if not self._q.empty():
@@ -255,7 +281,8 @@ class JoinWithTable(Flow, NeedsV3ioAccess):
         connector = aiohttp.TCPConnector()
         self._client_session = aiohttp.ClientSession(connector=connector)
         self._q = asyncio.queues.Queue(8)
-        self._worker_awaitable = asyncio.get_running_loop().create_task(self._worker())
+        self._worker_awaitable = asyncio.get_running_loop().create_task(
+                self._worker())
 
     async def do(self, element):
         if not self._client_session:
@@ -270,9 +297,12 @@ class JoinWithTable(Flow, NeedsV3ioAccess):
             await self._worker_awaitable
         else:
             key = self._key_extractor(element)
-            request = self._client_session.put(f'{self._webapi_url}/{self._table_path}/{key}',
-                                               headers=self._get_item_headers, data=self._body, verify_ssl=False)
-            await self._q.put((element, asyncio.get_running_loop().create_task(request)))
+            request = self._client_session.put(
+                f'{self._webapi_url}/{self._table_path}/{key}',
+                headers=self._get_item_headers,
+                data=self._body, verify_ssl=False)
+            task = asyncio.get_running_loop().create_task(request)
+            await self._q.put((element, task))
             if self._worker_awaitable.done():
                 await self._worker_awaitable
 

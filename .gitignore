@@ -1,0 +1,5 @@
+.envrc
+.pytest_cache
+.vscode
+dist
+storey.egg-info/

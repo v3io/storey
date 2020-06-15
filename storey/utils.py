@@ -1,5 +1,19 @@
-import struct
+# Copyright 2020 Iguazio
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import base64
+import struct
 from array import array
 
 
@@ -22,12 +36,14 @@ def parse_duration(string_time):
 
 def convert_array_tlv(a):
     """
-    get's the array typed array to convert to a blob value of an array, encode it to base64 from base10 with the following format-
+    get's the array typed array to convert to a blob value of an array, encode
+    it to base64 from base10 with the following format-
         struct vn_object_item_array_md {
         uint32_t magic_no; #define MAGIC_NO 11223344
         uint16_t version_no; #define ARRAY_VERSION 1
         uint32_t array_size_in_bytes; # 8 x element num (8x10 = 80)
-        enum node_query_filter_operand_type type; # int=11 (260), double=12 (261)
+        // int=11 (260), double=12 (261)
+        enum node_query_filter_operand_type type;
         };
     :param a: array type (e.g -  array('i', [1, 2, 3, 4, 5])
     :return: blob value of an array
@@ -45,13 +61,15 @@ def convert_array_tlv(a):
 
 def extract_array_tlv(b):
     """
-    get's the blob value of an array, decode it from base64 to base10 and extract the type, length and value based
+    get's the blob value of an array, decode it from base64 to base10 and
+    extract the type, length and value based
     on the structure -
         struct vn_object_item_array_md {
         uint32_t magic_no; #define MAGIC_NO 11223344
         uint16_t version_no; #define ARRAY_VERSION 1
         uint32_t array_size_in_bytes; # 8 x element num (8x10 = 80)
-        enum node_query_filter_operand_type type; # int=11 (260), double=12 (261)
+        // int=11 (260), double=12 (261)
+        enum node_query_filter_operand_type type;
         };
     :param b: blob value
     :return: array type array

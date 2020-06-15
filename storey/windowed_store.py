@@ -1,16 +1,35 @@
+# Copyright 2020 Iguazio
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import asyncio
 from datetime import datetime, timedelta
 
-from dtypes import *
-from flow import Flow, NeedsV3ioAccess
+from .flow import Flow, NeedsV3ioAccess
+from .dtypes import (
+    EmitAfterMaxEvent, EmitAfterPeriod, EmitAfterWindow, EmitEveryEvent
+)
 
 
 # a class that accepts - window, (data, key, timestamp)
 
+default_emit = EmitAfterMaxEvent(10)
+
 
 class Window(Flow, NeedsV3ioAccess):
-    def __init__(self, window, key_column, time_column, emit_policy=EmitAfterMaxEvent(10), webapi=None,
-                 access_key=None):
+    def __init__(
+        self, window, key_column, time_column, emit_policy=default_emit,
+            webapi=None, access_key=None):
         Flow.__init__(self)
         NeedsV3ioAccess.__init__(self, webapi, access_key)
         self._windowed_store = WindowedStore(window)
@@ -32,7 +51,8 @@ class Window(Flow, NeedsV3ioAccess):
 
     async def do(self, element):
         if (not self._emit_worker_running) and \
-                (isinstance(self._emit_policy, EmitAfterPeriod) or isinstance(self._emit_policy, EmitAfterWindow)):
+           (isinstance(self._emit_policy, EmitAfterPeriod) or
+                isinstance(self._emit_policy, EmitAfterWindow)):
             asyncio.get_running_loop().create_task(self._emit_worker())
             self._emit_worker_running = True
         key = element.pop(self._key_column)
@@ -41,8 +61,8 @@ class Window(Flow, NeedsV3ioAccess):
         self._events_in_batch = self._events_in_batch + 1
 
         if isinstance(self._emit_policy, EmitEveryEvent) or \
-                isinstance(self._emit_policy,
-                           EmitAfterMaxEvent) and self._events_in_batch == self._emit_policy.max_events:
+           isinstance(self._emit_policy, EmitAfterMaxEvent) and \
+           self._events_in_batch == self._emit_policy.max_events:
             await self._outlet.do(self._windowed_store)
             self._events_in_batch = 0
 
@@ -54,10 +74,9 @@ class WindowedStoreElement:
         self.window = window
         self.features = {}
         self.first_bucket_start_time = datetime.now()
-        self.last_bucket_start_time = self.first_bucket_start_time + \
-                                      timedelta(
-                                          milliseconds=(
-                                                               window.get_total_number_of_buckets() - 1) * window.period_millis)
+        dt = timedelta(milliseconds=(
+            window.get_total_number_of_buckets() - 1) * window.period_millis)
+        self.last_bucket_start_time = self.first_bucket_start_time + dt
 
         # for feature in aggregations:
         #     for aggr in aggregations[feature]:
@@ -77,22 +96,29 @@ class WindowedStoreElement:
 
     def initialize_column(self, column):
         self.features[column] = []
-        for i in range(self.window.get_total_number_of_buckets()):
+        for _ in range(self.window.get_total_number_of_buckets()):
             self.features[column].append([])
 
     def get_or_advance_bucket_index_by_timestamp(self, timestamp):
-        if timestamp < self.last_bucket_start_time + timedelta(milliseconds=self.window.period_millis):
+        min_time = self.last_bucket_start_time + timedelta(
+                milliseconds=self.window.period_millis)
+        if timestamp < min_time:
             bucket_index = int(
-                (timestamp - self.first_bucket_start_time).total_seconds() * 1000 / self.window.period_millis)
+                (timestamp - self.first_bucket_start_time).total_seconds()
+                * 1000 / self.window.period_millis)
             return bucket_index
         else:
             self.advance_window_period(timestamp)
-            return self.window.get_total_number_of_buckets() - 1  # return last index
+            # return last index
+            return self.window.get_total_number_of_buckets() - 1
 
-    def advance_window_period(self, advance_to=datetime.now()):
+    def advance_window_period(self, advance_to=None):
+        advance_to = datetime.now() if advance_to is None else advance_to
         desired_bucket_index = int(
-            (advance_to - self.first_bucket_start_time).total_seconds() * 1000 / self.window.period_millis)
-        buckets_to_advnace = desired_bucket_index - (self.window.get_total_number_of_buckets() - 1)
+            (advance_to - self.first_bucket_start_time).total_seconds()
+            * 1000 / self.window.period_millis)
+        buckets_to_advnace = desired_bucket_index - (
+                self.window.get_total_number_of_buckets() - 1)
 
         if buckets_to_advnace > 0:
             if buckets_to_advnace > self.window.get_total_number_of_buckets():
@@ -100,14 +126,19 @@ class WindowedStoreElement:
                     self.initialize_column(column)
             else:
                 for column in self.features:
-                    self.features[column] = self.features[column][buckets_to_advnace:]
-                    for i in range(buckets_to_advnace):
+                    self.features[column] = \
+                        self.features[column][buckets_to_advnace:]
+                    for _ in range(buckets_to_advnace):
                         self.features[column].extend([[]])
 
             self.first_bucket_start_time = \
-                self.first_bucket_start_time + timedelta(milliseconds=buckets_to_advnace * self.window.period_millis)
+                self.first_bucket_start_time + timedelta(
+                    milliseconds=buckets_to_advnace *
+                    self.window.period_millis)
             self.last_bucket_start_time = \
-                self.last_bucket_start_time + timedelta(milliseconds=buckets_to_advnace * self.window.period_millis)
+                self.last_bucket_start_time + timedelta(
+                    milliseconds=buckets_to_advnace *
+                    self.window.period_millis)
 
 
 def aggregate(self, aggregation, old_value, new_value):
