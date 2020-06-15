@@ -24,7 +24,11 @@ import aiohttp
 _termination_obj = object()
 
 
-class FlowException(Exception):
+class FlowError(Exception):
+    pass
+
+
+class V3ioError(Exception):
     pass
 
 
@@ -41,22 +45,21 @@ class Flow:
         for outlet in self._outlets:
             outlet.run()
 
-    async def do(self, element):
+    async def _do(self, element):
         raise NotImplementedError
 
     async def _do_downstream(self, element):
         if element is _termination_obj:
-            termination_result = await self._outlets[0].do(_termination_obj)
+            termination_result = await self._outlets[0]._do(_termination_obj)
             for i in range(1, len(self._outlets)):
                 termination_result = self._termination_result_fn(
                     termination_result,
-                    await self._outlets[i].do(_termination_obj))
+                    await self._outlets[i]._do(_termination_obj))
             return termination_result
         tasks = []
+        loop = asyncio.get_running_loop()
         for i in range(len(self._outlets)):
-            tasks.append(
-                asyncio.get_running_loop().create_task(
-                    self._outlets[i].do(element)))
+            tasks.append(loop.create_task(self._outlets[i]._do(element)))
         for task in tasks:
             await task
 
@@ -109,7 +112,8 @@ class Source(Flow):
 
     def _raise_on_error(self, ex):
         if ex:
-            raise FlowException('execution error') from self._ex
+            err = FlowError('Flow execution terminated due to an error')
+            raise err from self._ex
 
     def _emit(self, element):
         self._raise_on_error(self._ex)
@@ -146,7 +150,7 @@ class UnaryFunctionFlow(Flow):
     async def _do_internal(self, element, fn_result):
         raise NotImplementedError()
 
-    async def do(self, element):
+    async def _do(self, element):
         if element is _termination_obj:
             return await self._do_downstream(element)
         else:
@@ -180,9 +184,10 @@ class Reduce(Flow):
         self._result = inital_value
 
     def to(self, outlet):
-        raise Exception("Non-terminal Reduce")
+        raise ValueError(
+            "Reduce is a terminal step. It cannot be piped further.")
 
-    async def do(self, element):
+    async def _do(self, element):
         if element is _termination_obj:
             return self._result
         else:
@@ -243,7 +248,8 @@ class JoinWithTable(Flow, NeedsV3ioAccess):
                     else:
                         val = int(value)
                 else:
-                    raise Exception(f'Unsupported type: {typ!r}')
+                    raise V3ioError(
+                        f'Type {typ} in get item response is not supported')
             response_object[name] = val
         return response_object
 
@@ -263,8 +269,8 @@ class JoinWithTable(Flow, NeedsV3ioAccess):
                 elif response.status == 404:
                     pass
                 else:
-                    raise Exception(
-                        'get item. status code - '
+                    raise V3ioError(
+                        'Failed to get item. Response status code was '
                         f'{response.status}: {response_body}')
                 if response_object:
                     joined_element = self._join_function(
@@ -284,13 +290,13 @@ class JoinWithTable(Flow, NeedsV3ioAccess):
         self._worker_awaitable = asyncio.get_running_loop().create_task(
                 self._worker())
 
-    async def do(self, element):
+    async def _do(self, element):
         if not self._client_session:
             self._lazy_init()
 
         if self._worker_awaitable.done():
             await self._worker_awaitable
-            raise Exception("JoinWithTable worker has already terminated")
+            raise AssertionError("JoinWithTable worker has already terminated")
 
         if element is _termination_obj:
             await self._q.put(_termination_obj)
