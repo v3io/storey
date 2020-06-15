@@ -1,13 +1,21 @@
 import asyncio
 from datetime import datetime
 
-from .dtypes import EmitAfterMaxEvent, LateDataHandling, EmitAfterPeriod, EmitAfterWindow, EmitAfterDelay, EmitEveryEvent, EmissionType
+from .dtypes import (
+    EmissionType, EmitAfterDelay, EmitAfterMaxEvent, EmitAfterPeriod,
+    EmitAfterWindow, EmitEveryEvent, LateDataHandling
+)
 from .flow import Flow, NeedsV3ioAccess
+
+default_emit_policy = EmitAfterMaxEvent(10)
 
 
 class Window(Flow, NeedsV3ioAccess):
-    def __init__(self, window, key_column, time_column, emit_policy=EmitAfterMaxEvent(10),
-                 late_data_handling=LateDataHandling.Nothing, webapi=None, access_key=None):
+    def __init__(
+        self, window, key_column, time_column,
+        emit_policy=default_emit_policy,
+        late_data_handling=LateDataHandling.Nothing, webapi=None,
+            access_key=None):
         Flow.__init__(self)
         NeedsV3ioAccess.__init__(self, webapi, access_key)
         self._windowed_store = WindowedStore(window)
@@ -102,7 +110,7 @@ class WindowedStoreElement:
 
     def initialize_column(self, column):
         self.features[column] = []
-        for i in range(self.window.get_total_number_of_buckets()):
+        for _ in range(self.window.get_total_number_of_buckets()):
             self.features[column].append(WindowBucket())
 
     def get_or_advance_bucket_index_by_timestamp(self, timestamp):
@@ -124,7 +132,7 @@ class WindowedStoreElement:
             else:
                 for column in self.features:
                     self.features[column] = self.features[column][buckets_to_advnace:]
-                    for i in range(buckets_to_advnace):
+                    for _ in range(buckets_to_advnace):
                         self.features[column].extend([WindowBucket()])
 
             self.first_bucket_start_time = \
