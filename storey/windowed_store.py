@@ -30,7 +30,8 @@ class Window(Flow, NeedsV3ioAccess):
 
             await self.emit_window()
 
-    async def _do(self, element):
+    async def _do(self, event):
+        element = event.element
         if (not self._emit_worker_running) and \
                 (isinstance(self._emit_policy, EmitAfterPeriod) or isinstance(self._emit_policy, EmitAfterWindow)):
             asyncio.get_running_loop().create_task(self._emit_worker())
