@@ -57,7 +57,9 @@ class FlowController:
         self._emit_fn = emit_fn
         self._await_termination_fn = await_termination_fn
 
-    def emit(self, element, key=None, event_time=time.time()):
+    def emit(self, element, key=None, event_time=None):
+        if event_time is None:
+            event_time = time.time()
         self._emit_fn(Event(element, key, event_time))
 
     def terminate(self):
