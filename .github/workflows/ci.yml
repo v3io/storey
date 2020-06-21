@@ -24,4 +24,6 @@ jobs:
         #env: # Or as an environment variable
         #  V3IO_API: ${{ secrets.V3IO_API }}
         #  V3IO_ACCESS_KEY: ${{ secrets.V3IO_ACCESS_KEY }}
-        run: python -m pytest -rf -v tests
+        run: |
+          flake8 storey tests
+          python -m pytest -rf -v tests
