@@ -209,18 +209,98 @@ class NeedsV3ioAccess:
         }
 
 
-class JoinWithTable(Flow, NeedsV3ioAccess):
+class HttpRequest:
+    def __init__(self, method, url, body, headers=None):
+        self.method = method
+        self.url = url
+        self.body = body
+        if headers is None:
+            headers = {}
+        self.headers = headers
+
+
+class HttpResponse:
+    def __init__(self, status, body):
+        self.status = status
+        self.body = body
+
+
+class JoinWithHttp(Flow):
+    def __init__(self, request_builder, join_function, max_in_flight=8, **kwargs):
+        Flow.__init__(self, **kwargs)
+        self._request_builder = request_builder
+        self._join_function = join_function
+        self._max_in_flight = max_in_flight
+
+        self._client_session = None
+
+    async def _worker(self):
+        try:
+            while True:
+                job = await self._q.get()
+                if job is _termination_obj:
+                    break
+                event = job[0]
+                request = job[1]
+                response = await request
+                response_body = await response.text()
+                joined_element = self._join_function(event, HttpResponse(response.status, response_body))
+                if joined_element is not None:
+                    await self._do_downstream(Event(joined_element, event.key, event.time))
+        except BaseException as ex:
+            if not self._q.empty():
+                await self._q.get()
+            raise ex
+        finally:
+            await self._client_session.close()
+
+    def _lazy_init(self):
+        connector = aiohttp.TCPConnector()
+        self._client_session = aiohttp.ClientSession(connector=connector)
+        self._q = asyncio.queues.Queue(self._max_in_flight)
+        self._worker_awaitable = asyncio.get_running_loop().create_task(self._worker())
+
+    async def _do(self, event):
+        if not self._client_session:
+            self._lazy_init()
+
+        if self._worker_awaitable.done():
+            await self._worker_awaitable
+            raise AssertionError("JoinWithHttp worker has already terminated")
+
+        if event is _termination_obj:
+            await self._q.put(_termination_obj)
+            await self._worker_awaitable
+        else:
+            element = event.element
+            req = self._request_builder(element)
+            request = self._client_session.request(req.method, req.url, headers=req.headers, data=req.body, ssl=False)
+            await self._q.put((event, asyncio.get_running_loop().create_task(request)))
+            if self._worker_awaitable.done():
+                await self._worker_awaitable
+
+
+class JoinWithV3IOTable(JoinWithHttp, NeedsV3ioAccess):
     _non_int_char_pattern = re.compile(r"[^-0-9]")
 
     def __init__(self, key_extractor, join_function, table_path, attributes='*', webapi=None, access_key=None, **kwargs):
-        Flow.__init__(self, **kwargs)
         NeedsV3ioAccess.__init__(self, webapi, access_key)
-        self._key_extractor = key_extractor
-        self._join_function = join_function
-        self._table_path = table_path
-        self._body = json.dumps({'AttributesToGet': attributes})
+        request_body = json.dumps({'AttributesToGet': attributes})
 
-        self._client_session = None
+        def request_builder(event):
+            key = key_extractor(event)
+            return HttpRequest('PUT', f'{self._webapi_url}/{table_path}/{key}', request_body, self._get_item_headers)
+
+        def join_from_response(event, response):
+            if response.status == 200:
+                response_object = self._parse_response(response.body)
+                return join_function(event, response_object)
+            elif response.status == 404:
+                return None
+            else:
+                raise V3ioError(f'Failed to get item. Response status code was {response.status}: {response.body}')
+
+        JoinWithHttp.__init__(self, request_builder, join_from_response, **kwargs)
 
     def _parse_response(self, response_body):
         response_object = json.loads(response_body)["Item"]
@@ -238,59 +318,6 @@ class JoinWithTable(Flow, NeedsV3ioAccess):
                     raise V3ioError(f'Type {typ} in get item response is not supported')
             response_object[name] = val
         return response_object
-
-    async def _worker(self):
-        try:
-            while True:
-                response_object = None
-                job = await self._q.get()
-                if job is _termination_obj:
-                    break
-                event = job[0]
-                request = job[1]
-                response = await request
-                response_body = await response.text()
-                if response.status == 200:
-                    response_object = self._parse_response(response_body)
-                elif response.status == 404:
-                    pass
-                else:
-                    raise V3ioError(f'Failed to get item. Response status code was {response.status}: {response_body}')
-                if response_object:
-                    joined_element = self._join_function(event.element, response_object)
-                    await self._do_downstream(Event(joined_element, event.key, event.time))
-        except BaseException as ex:
-            if not self._q.empty():
-                await self._q.get()
-            raise ex
-        finally:
-            await self._client_session.close()
-
-    def _lazy_init(self):
-        connector = aiohttp.TCPConnector()
-        self._client_session = aiohttp.ClientSession(connector=connector)
-        self._q = asyncio.queues.Queue(8)
-        self._worker_awaitable = asyncio.get_running_loop().create_task(self._worker())
-
-    async def _do(self, event):
-        if not self._client_session:
-            self._lazy_init()
-
-        if self._worker_awaitable.done():
-            await self._worker_awaitable
-            raise AssertionError("JoinWithTable worker has already terminated")
-
-        if event is _termination_obj:
-            await self._q.put(_termination_obj)
-            await self._worker_awaitable
-        else:
-            element = event.element
-            key = self._key_extractor(element)
-            request = self._client_session.put(f'{self._webapi_url}/{self._table_path}/{key}',
-                                               headers=self._get_item_headers, data=self._body, verify_ssl=False)
-            await self._q.put((event, asyncio.get_running_loop().create_task(request)))
-            if self._worker_awaitable.done():
-                await self._worker_awaitable
 
 
 def build_flow(steps):

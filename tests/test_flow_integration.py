@@ -1,5 +1,5 @@
-from conftest import has_v3io_creds
-from storey import Filter, JoinWithTable, Map, Source, build_flow
+from .conftest import has_v3io_creds
+from storey import Filter, JoinWithV3IOTable, Map, Source, build_flow
 
 import pytest
 
@@ -10,7 +10,7 @@ def test_functional_flow():
         Source(),
         Map(lambda x: x + 1),
         Filter(lambda x: x < 3),
-        JoinWithTable(lambda x: x, lambda x, y: y['secret'], '/bigdata/gal'),
+        JoinWithV3IOTable(lambda x: x, lambda x, y: y['secret'], 'bigdata/gal'),
         Map(lambda x: print(x))
     ])
     mat = flow.run()
