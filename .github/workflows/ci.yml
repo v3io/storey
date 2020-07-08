@@ -14,9 +14,9 @@ jobs:
         env:
           GITHUB_CONTEXT: ${{ toJson(github) }}
         run: echo "$GITHUB_CONTEXT"
-    - run: echo "$V3IO_API"
-      env:
-        V3IO_API: ${{ secrets.V3IO_API }}
+      - run: echo "$V3IO_API"
+        env:
+          V3IO_API: ${{ secrets.V3IO_API }}
       - run: echo "$V3IO_ACCESS_KEY"
         env:
           V3IO_API: ${{ secrets.V3IO_ACCESS_KEY }}
