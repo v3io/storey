@@ -7,6 +7,7 @@ bucketPerWindow = 10
 
 
 class WindowBase:
+
     def __init__(self, window, period, window_str):
         self.window_millis = window
         self.period_millis = period
