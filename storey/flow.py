@@ -140,7 +140,7 @@ class UnaryFunctionFlow(Flow):
 
     async def _do(self, event):
         if event is _termination_obj:
-            return await self._do_downstream(event)
+            return await self._do_downstream(_termination_obj)
         else:
             element = event.element
             fn_result = await self._call(element)
@@ -208,6 +208,11 @@ class NeedsV3ioAccess:
             'X-v3io-session-key': access_key
         }
 
+        self._put_item_headers = {
+            'X-v3io-function': 'PutItem',
+            'X-v3io-session-key': access_key
+        }
+
 
 class HttpRequest:
     def __init__(self, method, url, body, headers=None):
@@ -226,10 +231,10 @@ class HttpResponse:
 
 
 class JoinWithHttp(Flow):
-    def __init__(self, request_builder, join_function, max_in_flight=8, **kwargs):
+    def __init__(self, request_builder, join_from_response, max_in_flight=8, **kwargs):
         Flow.__init__(self, **kwargs)
         self._request_builder = request_builder
-        self._join_function = join_function
+        self._join_from_response = join_from_response
         self._max_in_flight = max_in_flight
 
         self._client_session = None
@@ -244,7 +249,7 @@ class JoinWithHttp(Flow):
                 request = job[1]
                 response = await request
                 response_body = await response.text()
-                joined_element = self._join_function(event, HttpResponse(response.status, response_body))
+                joined_element = self._join_from_response(event, HttpResponse(response.status, response_body))
                 if joined_element is not None:
                     await self._do_downstream(Event(joined_element, event.key, event.time))
         except BaseException as ex:
@@ -271,6 +276,7 @@ class JoinWithHttp(Flow):
         if event is _termination_obj:
             await self._q.put(_termination_obj)
             await self._worker_awaitable
+            return await self._do_downstream(_termination_obj)
         else:
             element = event.element
             req = self._request_builder(element)
