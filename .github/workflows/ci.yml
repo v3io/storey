@@ -10,6 +10,16 @@ jobs:
         python-version: [3.7, 3.8]
 
     steps:
+      - name: Dump GitHub context
+        env:
+          GITHUB_CONTEXT: ${{ toJson(github) }}
+        run: echo "$GITHUB_CONTEXT"
+    - run: echo "$V3IO_API"
+      env:
+        V3IO_API: ${{ secrets.V3IO_API }}
+      - run: echo "$V3IO_ACCESS_KEY"
+        env:
+          V3IO_API: ${{ secrets.V3IO_ACCESS_KEY }}
       - uses: actions/checkout@v2
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v1
