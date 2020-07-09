@@ -17,7 +17,7 @@ class Setup(NeedsV3ioAccess):
             assert response.status == 200, f'Bad response {response} to request {request_body}'
 
 
-def test_functional_flow():
+def test_join_with_v3io_table():
     table_path = f'bigdata/{int(time.time_ns() / 1000)}'
     asyncio.run(Setup().setup(table_path))
     controller = build_flow([
@@ -33,3 +33,19 @@ def test_functional_flow():
     controller.terminate()
     termination_result = controller.await_termination()
     assert termination_result == 42
+
+
+def test_join_with_http():
+    controller = build_flow([
+        Source(),
+        Map(lambda x: x + 1),
+        Filter(lambda x: x < 8),
+        JoinWithHttp(lambda _: HttpRequest('GET', 'https://google.com', ''), lambda _, response: response.status),
+        Reduce(0, lambda x, y: x + y)
+    ]).run()
+    for i in range(10):
+        controller.emit(i)
+
+    controller.terminate()
+    termination_result = controller.await_termination()
+    assert termination_result == 200 * 7

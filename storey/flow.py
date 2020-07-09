@@ -249,7 +249,7 @@ class JoinWithHttp(Flow):
                 request = job[1]
                 response = await request
                 response_body = await response.text()
-                joined_element = self._join_from_response(event, HttpResponse(response.status, response_body))
+                joined_element = self._join_from_response(event.element, HttpResponse(response.status, response_body))
                 if joined_element is not None:
                     await self._do_downstream(Event(joined_element, event.key, event.time))
         except BaseException as ex:
@@ -297,10 +297,10 @@ class JoinWithV3IOTable(JoinWithHttp, NeedsV3ioAccess):
             key = key_extractor(event)
             return HttpRequest('PUT', f'{self._webapi_url}/{table_path}/{key}', request_body, self._get_item_headers)
 
-        def join_from_response(event, response):
+        def join_from_response(element, response):
             if response.status == 200:
                 response_object = self._parse_response(response.body)
-                return join_function(event, response_object)
+                return join_function(element, response_object)
             elif response.status == 404:
                 return None
             else:
