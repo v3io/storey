@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import collections
 import json
 import os
@@ -6,6 +7,7 @@ import queue
 import re
 import threading
 import time
+from datetime import datetime
 
 import aiohttp
 
@@ -286,8 +288,35 @@ class JoinWithHttp(Flow):
                 await self._worker_awaitable
 
 
+_non_int_char_pattern = re.compile(r"[^-0-9]")
+
+
+def _v3io_parse_response(response_body):
+    response_object = json.loads(response_body)["Item"]
+    for name, type_to_value in response_object.items():
+        val = None
+        for typ, value in type_to_value.items():
+            if typ == 'S' or typ == 'BOOL':
+                val = value
+            elif typ == 'N':
+                if _non_int_char_pattern.search(value):
+                    val = float(value)
+                else:
+                    val = int(value)
+            elif typ == 'B':
+                val = base64.b64decode(value)
+            elif typ == 'TS':
+                splits = value.split(':', 1)
+                secs = int(splits[0])
+                nanosecs = int(splits[1])
+                val = datetime.utcfromtimestamp(secs + nanosecs / 1000000000)
+            else:
+                raise V3ioError(f'Type {typ} in get item response is not supported')
+        response_object[name] = val
+    return response_object
+
+
 class JoinWithV3IOTable(JoinWithHttp, NeedsV3ioAccess):
-    _non_int_char_pattern = re.compile(r"[^-0-9]")
 
     def __init__(self, key_extractor, join_function, table_path, attributes='*', webapi=None, access_key=None, **kwargs):
         NeedsV3ioAccess.__init__(self, webapi, access_key)
@@ -299,7 +328,7 @@ class JoinWithV3IOTable(JoinWithHttp, NeedsV3ioAccess):
 
         def join_from_response(element, response):
             if response.status == 200:
-                response_object = self._parse_response(response.body)
+                response_object = _v3io_parse_response(response.body)
                 return join_function(element, response_object)
             elif response.status == 404:
                 return None
@@ -307,23 +336,6 @@ class JoinWithV3IOTable(JoinWithHttp, NeedsV3ioAccess):
                 raise V3ioError(f'Failed to get item. Response status code was {response.status}: {response.body}')
 
         JoinWithHttp.__init__(self, request_builder, join_from_response, **kwargs)
-
-    def _parse_response(self, response_body):
-        response_object = json.loads(response_body)["Item"]
-        for name, type_to_value in response_object.items():
-            val = None
-            for typ, value in type_to_value.items():
-                if typ == 'S' or typ == 'BOOL':
-                    val = value
-                elif typ == 'N':
-                    if self._non_int_char_pattern.search(value):
-                        val = float(value)
-                    else:
-                        val = int(value)
-                else:
-                    raise V3ioError(f'Type {typ} in get item response is not supported')
-            response_object[name] = val
-        return response_object
 
 
 def build_flow(steps):
