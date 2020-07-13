@@ -2,11 +2,14 @@
 all:
 	$(error please pick a target)
 
+.PHONY: lint
+lint:
+	./venv/bin/python -m flake8 storey
+
 .PHONY: test
 test:
 	find storey -name '*.pyc' -exec rm {} \;
 	find tests -name '*.pyc' -exec rm {} \;
-	flake8 storey tests
 	./venv/bin/python -m pytest --ignore=integration -rf -v .
 
 .PHONY: integration
