@@ -8,6 +8,7 @@ import re
 import threading
 import time
 from datetime import datetime
+import random
 
 import aiohttp
 
@@ -39,6 +40,8 @@ class Flow:
         raise NotImplementedError
 
     async def _do_downstream(self, event):
+        if not self._outlets:
+            return
         if event is _termination_obj:
             termination_result = await self._outlets[0]._do(_termination_obj)
             for i in range(1, len(self._outlets)):
@@ -247,6 +250,16 @@ class NeedsV3ioAccess:
             'X-v3io-session-key': access_key
         }
 
+        self._put_records_headers = {
+            'X-v3io-function': 'PutRecords',
+            'X-v3io-session-key': access_key
+        }
+
+        self._create_stream_headers = {
+            'X-v3io-function': 'CreateStream',
+            'X-v3io-session-key': access_key
+        }
+
 
 class HttpRequest:
     def __init__(self, method, url, body, headers=None):
@@ -312,8 +325,7 @@ class JoinWithHttp(Flow):
             await self._worker_awaitable
             return await self._do_downstream(_termination_obj)
         else:
-            element = event.element
-            req = self._request_builder(element)
+            req = self._request_builder(event)
             request = self._client_session.request(req.method, req.url, headers=req.headers, data=req.body, ssl=False)
             await self._q.put((event, asyncio.get_running_loop().create_task(request)))
             if self._worker_awaitable.done():
@@ -323,7 +335,7 @@ class JoinWithHttp(Flow):
 _non_int_char_pattern = re.compile(r"[^-0-9]")
 
 
-def _v3io_parse_response(response_body):
+def _v3io_parse_get_item_response(response_body):
     response_object = json.loads(response_body)["Item"]
     for name, type_to_value in response_object.items():
         val = None
@@ -360,12 +372,57 @@ class JoinWithV3IOTable(JoinWithHttp, NeedsV3ioAccess):
 
         def join_from_response(element, response):
             if response.status == 200:
-                response_object = _v3io_parse_response(response.body)
+                response_object = _v3io_parse_get_item_response(response.body)
                 return join_function(element, response_object)
             elif response.status == 404:
                 return None
             else:
                 raise V3ioError(f'Failed to get item. Response status code was {response.status}: {response.body}')
+
+        JoinWithHttp.__init__(self, request_builder, join_from_response, **kwargs)
+
+
+def _build_request_put_records(partition_func, events):
+    record_list_for_json = []
+    for event in events:
+        record = event.element
+        record_as_bytes = None
+        if isinstance(record, bytes):
+            record_as_bytes = record
+        elif isinstance(record, str):
+            record_as_bytes = record.encode("utf-8")
+        else:
+            raise Exception(f'Unsupported record type {type(record)}')
+        record_as_b64_string = str(base64.b64encode(record_as_bytes), "utf-8")
+        record_list_for_json.append({'PartitionKey': partition_func(event), 'Data': record_as_b64_string})
+
+    payload_obj = {
+        'Records': record_list_for_json
+    }
+    return json.dumps(payload_obj)
+
+
+class WriteToV3IOStream(JoinWithHttp, NeedsV3ioAccess):
+
+    def __init__(self, stream_path, partition_func=None, webapi=None, access_key=None, **kwargs):
+        NeedsV3ioAccess.__init__(self, webapi, access_key)
+        if partition_func is None:
+            def f(_):
+                return str(random.random())
+
+            partition_func = f
+        self._partition_func = partition_func
+
+        def request_builder(event):
+            request_body = _build_request_put_records(self._partition_func, [event])
+            return HttpRequest('POST', f'{self._webapi_url}/{stream_path}/', request_body, self._put_records_headers)
+
+        def join_from_response(_, response):
+            if response.status == 200:
+                response_obj = json.loads(response.body)
+                if response_obj['FailedRecordCount'] == 0:
+                    return None
+            raise V3ioError(f'Failed to put records to V3IO. Got {response.status} response: {response.body}')
 
         JoinWithHttp.__init__(self, request_builder, join_from_response, **kwargs)
 
