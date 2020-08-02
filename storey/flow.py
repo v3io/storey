@@ -391,6 +391,8 @@ def _build_request_put_records(partition_func, events):
             record_as_bytes = record
         elif isinstance(record, str):
             record_as_bytes = record.encode("utf-8")
+        elif isinstance(record, dict):
+            record_as_bytes = json.dumps(record).encode("utf-8")
         else:
             raise Exception(f'Unsupported record type {type(record)}')
         record_as_b64_string = str(base64.b64encode(record_as_bytes), "utf-8")
