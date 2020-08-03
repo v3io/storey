@@ -1,3 +1,5 @@
+import base64
+
 from storey import Filter, JoinWithV3IOTable, JoinWithHttp, Map, Reduce, Source, NeedsV3ioAccess, HttpRequest, build_flow, WriteToV3IOStream
 
 import aiohttp
@@ -14,7 +16,7 @@ class SetupKvTable(NeedsV3ioAccess):
             request_body = json.dumps({'Item': {'secret': {'N': f'{10 - i}'}}})
             response = await client_session.request(
                 'PUT', f'{self._webapi_url}/{table_path}/{i}', headers=self._put_item_headers, data=request_body, ssl=False)
-            assert response.status == 200, f'Bad response {response} to request {request_body}'
+            assert response.status == 200, f'Bad response {await response.text()} to request {request_body}'
 
 
 class SetupStream(NeedsV3ioAccess):
@@ -24,7 +26,31 @@ class SetupStream(NeedsV3ioAccess):
         request_body = json.dumps({"ShardCount": 2, "RetentionPeriodHours": 1})
         response = await client_session.request(
             'POST', f'{self._webapi_url}/{stream_path}/', headers=self._create_stream_headers, data=request_body, ssl=False)
-        assert response.status == 204, f'Bad response {response} to request {request_body}'
+        assert response.status == 204, f'Bad response {await response.text()} to request {request_body}'
+
+
+class GetShardData(NeedsV3ioAccess):
+    async def get_shard_data(self, path):
+        connector = aiohttp.TCPConnector()
+        client_session = aiohttp.ClientSession(connector=connector)
+        request_body = json.dumps({'Type': 'EARLIEST'})
+        response = await client_session.request(
+            'PUT', f'{self._webapi_url}/{path}', headers=self._seek_headers, data=request_body, ssl=False)
+        assert response.status == 200
+        location = json.loads(await response.text())['Location']
+        data = []
+        while True:
+            request_body = json.dumps({'Location': location})
+            response = await client_session.request(
+                'PUT', f'{self._webapi_url}/{path}', headers=self._get_records_headers, data=request_body, ssl=False)
+            assert response.status == 200
+            response_dict = json.loads(await response.text())
+            for record in response_dict['Records']:
+                data.append(base64.b64decode(record['Data']))
+            if response_dict['RecordsBehindLatest'] == 0:
+                break
+            location = response_dict['NextLocation']
+        return data
 
 
 def test_join_with_v3io_table():
@@ -67,10 +93,14 @@ def test_write_to_v3io_stream():
     controller = build_flow([
         Source(),
         Map(lambda x: str(x)),
-        WriteToV3IOStream(stream_path, partition_func=lambda event: str(int(event.element) % 2))
+        WriteToV3IOStream(stream_path, sharding_func=lambda event: int(event.element))
     ]).run()
     for i in range(10):
         controller.emit(i)
 
     controller.terminate()
     controller.await_termination()
+    shard0_data = asyncio.run(GetShardData().get_shard_data(f'{stream_path}/0'))
+    assert shard0_data == [b'0', b'2', b'4', b'6', b'8']
+    shard1_data = asyncio.run(GetShardData().get_shard_data(f'{stream_path}/1'))
+    assert shard1_data == [b'1', b'3', b'5', b'7', b'9']
