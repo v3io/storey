@@ -36,6 +36,8 @@ class GetShardData(NeedsV3ioAccess):
         request_body = json.dumps({'Type': 'EARLIEST'})
         response = await client_session.request(
             'PUT', f'{self._webapi_url}/{path}', headers=self._seek_headers, data=request_body, ssl=False)
+        if response.status == 404:
+            return []
         assert response.status == 200
         location = json.loads(await response.text())['Location']
         data = []
@@ -104,3 +106,22 @@ def test_write_to_v3io_stream():
     assert shard0_data == [b'0', b'2', b'4', b'6', b'8']
     shard1_data = asyncio.run(GetShardData().get_shard_data(f'{stream_path}/1'))
     assert shard1_data == [b'1', b'3', b'5', b'7', b'9']
+
+
+def test_write_to_v3io_stream_unbalanced():
+    stream_path = f'bigdata/test_write_to_v3io_stream/{int(time.time_ns() / 1000)}/'
+    asyncio.run(SetupStream().setup(stream_path))
+    controller = build_flow([
+        Source(),
+        Map(lambda x: str(x)),
+        WriteToV3IOStream(stream_path, sharding_func=lambda event: 0)
+    ]).run()
+    for i in range(10):
+        controller.emit(i)
+
+    controller.terminate()
+    controller.await_termination()
+    shard0_data = asyncio.run(GetShardData().get_shard_data(f'{stream_path}/0'))
+    assert shard0_data == [b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9']
+    shard1_data = asyncio.run(GetShardData().get_shard_data(f'{stream_path}/1'))
+    assert shard1_data == []
