@@ -38,14 +38,22 @@ class GetShardData(NeedsV3ioAccess):
             'PUT', f'{self._webapi_url}/{path}', headers=self._seek_headers, data=request_body, ssl=False)
         if response.status == 404:
             return []
-        assert response.status == 200
+        if response.status == 400:  # Regression in 2.10
+            body = await response.text()
+            try:
+                body_obj = json.loads(body)
+                if body_obj['ErrorMessage'] == "ResourceNotFoundException":
+                    return []
+            except:
+                raise AssertionError(f'Got response status code 400: {body}')
+        assert response.status == 200, await response.text()
         location = json.loads(await response.text())['Location']
         data = []
         while True:
             request_body = json.dumps({'Location': location})
             response = await client_session.request(
                 'PUT', f'{self._webapi_url}/{path}', headers=self._get_records_headers, data=request_body, ssl=False)
-            assert response.status == 200
+            assert response.status == 200, await response.text()
             response_dict = json.loads(await response.text())
             for record in response_dict['Records']:
                 data.append(base64.b64decode(record['Data']))
