@@ -398,7 +398,6 @@ class JoinWithV3IOTable(JoinWithHttp, NeedsV3ioAccess):
 
 
 def _build_request_put_records(shard_id, events):
-    print(f'_build_request_put_records({shard_id}, {events})')
     record_list_for_json = []
     for event in events:
         record = event.element
@@ -425,8 +424,12 @@ class WriteToV3IOStream(Flow, NeedsV3ioAccess):
         Flow.__init__(self, **kwargs)
         NeedsV3ioAccess.__init__(self, webapi, access_key)
 
+        if sharding_func is not None and not callable(sharding_func):
+            raise TypeError(f'Expected a callable, got {type(sharding_func)}')
+
         self.stream_path = stream_path
         self._sharding_func = sharding_func
+
         self._batch_size = batch_size
 
         self._client_session = None
@@ -467,7 +470,7 @@ class WriteToV3IOStream(Flow, NeedsV3ioAccess):
                         if len(buffers[shard_id]) >= self._batch_size:
                             self._send_batch(buffers, in_flight_reqs, shard_id)
                 event = await self._q.get()
-                if event is _termination_obj:  # handle outstanding batches in in flight requests on termination
+                if event is _termination_obj:  # handle outstanding batches and in flight requests on termination
                     for req in in_flight_reqs:
                         await self._handle_response(req)
                     for shard_id in range(self._shard_count):
