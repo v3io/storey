@@ -2,6 +2,13 @@ import base64
 import struct
 from array import array
 
+bucketPerWindow = 10
+
+
+def get_default_period_by_window(window_str):
+    window_millis = parse_duration(window_str)
+    return window_millis / bucketPerWindow
+
 
 def parse_duration(string_time):
     unit = string_time[-1]

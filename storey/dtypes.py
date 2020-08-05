@@ -1,9 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from .utils import parse_duration
-
-bucketPerWindow = 10
+from .utils import parse_duration, bucketPerWindow
 
 
 class WindowBase:
@@ -41,6 +39,62 @@ class SlidingWindow(WindowBase):
 
     def get_total_number_of_buckets(self):
         return int(self.window_millis / self.period_millis)
+
+    def get_window_start_time(self):
+        return datetime.now().timestamp() * 1000
+
+
+class WindowsBase:
+    def __init__(self, period, max_window, smallest_window, windows_str):
+        self.max_window_millis = max_window
+        self.smallest_window_millis = smallest_window
+        self.period_millis = period
+        self.windows_str = windows_str
+        self.windows_millis = [parse_duration(win) for win in windows_str]
+        self.total_number_of_buckets = int(self.max_window_millis / self.period_millis)
+
+
+class FixedWindows(WindowsBase):
+    def __init__(self, windows):
+        max_window_millis = parse_duration(windows[-1])
+        smallest_window_millis = parse_duration(windows[0])
+        WindowsBase.__init__(self, smallest_window_millis / bucketPerWindow,
+                             max_window_millis, smallest_window_millis, windows)
+
+    def get_window_start_time(self):
+        return self.get_period_by_time(datetime.now().timestamp() * 1000)
+
+    def get_current_window(self):
+        return int((datetime.now().timestamp() * 1000) / self.smallest_window_millis) * self.smallest_window_millis
+
+    def get_period_by_time(self, timestamp):
+        return int(timestamp / self.period_millis) * self.period_millis
+
+    def get_window_start_time_by_time(self, timestamp):
+        return self.get_period_by_time(timestamp)
+
+
+class SlidingWindows(WindowsBase):
+    def __init__(self, windows, period=None):
+
+        max_window_millis = parse_duration(windows[-1])
+        smallest_window_millis = parse_duration(windows[0])
+
+        if period:
+            period_millis = parse_duration(period)
+
+            # Verify the given period is a divider of the windows
+            for window in windows:
+                if not parse_duration(window) % period_millis == 0:
+                    raise Exception(
+                        f'period must be a divider of every window, but period {period} does not divide {window}')
+        else:
+            period_millis = smallest_window_millis / bucketPerWindow
+
+        WindowsBase.__init__(self, period_millis, max_window_millis, smallest_window_millis, windows)
+
+    def get_window_start_time_by_time(self, timestamp):
+        return timestamp
 
     def get_window_start_time(self):
         return datetime.now().timestamp() * 1000
