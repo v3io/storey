@@ -87,7 +87,6 @@ def test_aggregations_with_filters_flow():
 
     controller.terminate()
     aggregates_list = controller.await_termination()
-    pass
 
 
 def test_aggregations_with_max_values_flow():
