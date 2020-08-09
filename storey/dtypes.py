@@ -61,17 +61,11 @@ class FixedWindows(WindowsBase):
         WindowsBase.__init__(self, smallest_window_millis / bucketPerWindow,
                              max_window_millis, smallest_window_millis, windows)
 
-    def get_window_start_time(self):
-        return self.get_period_by_time(datetime.now().timestamp() * 1000)
-
-    def get_current_window(self):
-        return int((datetime.now().timestamp() * 1000) / self.smallest_window_millis) * self.smallest_window_millis
-
     def get_period_by_time(self, timestamp):
         return int(timestamp / self.period_millis) * self.period_millis
 
-    def get_window_start_time_by_time(self, timestamp):
-        return self.get_period_by_time(timestamp)
+    def get_window_start_time_by_time(self, reference_timestamp):
+        return self.get_period_by_time(reference_timestamp)
 
 
 class SlidingWindows(WindowsBase):
@@ -95,9 +89,6 @@ class SlidingWindows(WindowsBase):
 
     def get_window_start_time_by_time(self, timestamp):
         return timestamp
-
-    def get_window_start_time(self):
-        return datetime.now().timestamp() * 1000
 
 
 class EmissionType(Enum):

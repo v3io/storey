@@ -22,7 +22,7 @@ _raw_aggregates_by_name = {'count': _aggrTypeCount,
                            'max': _aggrTypeMax,
                            'min': _aggrTypeMin,
                            'last': _aggrTypeLast}
-_all_aggreagtes_by_name = {'count': _aggrTypeCount,
+_all_aggregates_by_name = {'count': _aggrTypeCount,
                            'sum': _aggrTypeSum,
                            'sqr': _aggrTypeSqr,
                            'max': _aggrTypeMax,
@@ -31,7 +31,7 @@ _all_aggreagtes_by_name = {'count': _aggrTypeCount,
                            'avg': _aggrTypeAvg,
                            'stdvar': _aggrTypeStdvar,
                            'stddev': _aggrTypeStddev}
-_all_aggreagtes_to_name = {_aggrTypeCount: 'count',
+_all_aggregates_to_name = {_aggrTypeCount: 'count',
                            _aggrTypeSum: 'sum',
                            _aggrTypeSqr: 'sqr',
                            _aggrTypeMax: 'max',
@@ -69,7 +69,7 @@ def _stdvar(args):
     return (count * sqr - sum * sum) / (count * (count - 1))
 
 
-def get_virtual_aggreagtion_func(aggregation):
+def get_virtual_aggregation_func(aggregation):
     if aggregation == 'avg':
         return _avg
     if aggregation == 'stdvar':
@@ -82,8 +82,8 @@ def get_virtual_aggreagtion_func(aggregation):
 
 def get_dependant_aggregates(aggregate):
     aggrs = []
-    aggr_bits = _all_aggreagtes_by_name[aggregate]
+    aggr_bits = _all_aggregates_by_name[aggregate]
     for raw_aggr in _raw_aggregates:
         if aggr_bits & raw_aggr == raw_aggr:
-            aggrs.append(_all_aggreagtes_to_name[raw_aggr])
+            aggrs.append(_all_aggregates_to_name[raw_aggr])
     return aggrs

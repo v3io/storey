@@ -1,24 +1,18 @@
 from datetime import datetime
 
-from .aggregation_utils import is_raw_aggregate, get_virtual_aggreagtion_func, get_dependant_aggregates
-from .dtypes import LateDataHandling, EmitEveryEvent
+from .aggregation_utils import is_raw_aggregate, get_virtual_aggregation_func, get_dependant_aggregates
+from .dtypes import EmitEveryEvent
 from .flow import Flow, _termination_obj, Event
 
 _default_emit_policy = EmitEveryEvent()
 
 
 class AggregateByKey(Flow):
-    def __init__(self, aggregates, table, key=None, emit_policy=_default_emit_policy,
-                 late_data_handling=LateDataHandling.Nothing):
+    def __init__(self, aggregates, table, key=None):
         Flow.__init__(self)
         self._aggregates_store = AggregatedStore(aggregates)
         self.table = table
         self.aggregates_metadata = aggregates
-        self._emit_policy = emit_policy
-        self._late_data_handling = late_data_handling
-        self._events_in_batch = 0
-        self._emit_worker_running = False
-        self._terminate_worker = False
 
         self.key_extractor = None
         if key:
@@ -43,9 +37,8 @@ class AggregateByKey(Flow):
         if isinstance(event_time, datetime):
             event_time = event_time.timestamp() * 1000
         self._aggregates_store.aggregate(key, element, event_time)
-        self._events_in_batch = self._events_in_batch + 1
 
-        features = self._aggregates_store.get_features(key)
+        features = self._aggregates_store.get_features(key, event_time)
         element.update(features)
         await self._do_downstream(Event(element, None, None))
 
@@ -73,7 +66,7 @@ class AggregatedStoreElement:
                         dependant_buckets.append(self.features[f'{aggregation_metadata.name}_{dep}'])
                     self.features[f'{aggregation_metadata.name}_{aggr}'] = \
                         VirtualAggregationBuckets(aggregation_metadata.name, aggr, aggregation_metadata.windows,
-                                                  dependant_buckets)
+                                                  base_time, dependant_buckets)
 
     def aggregate(self, data, timestamp):
         # add a new point and aggregate
@@ -83,10 +76,10 @@ class AggregatedStoreElement:
                 for aggr in aggregation_metadata.get_all_raw_aggregates():
                     self.features[f'{aggregation_metadata.name}_{aggr}'].aggregate(timestamp, curr_value)
 
-    def get_features(self):
+    def get_features(self, timestamp):
         result = {}
         for feature in self.features.values():
-            result.update(feature.get_features())
+            result.update(feature.get_features(timestamp))
 
         return result
 
@@ -105,8 +98,8 @@ class AggregatedStore:
 
         self.cache[key].aggregate(data, timestamp)
 
-    def get_features(self, key):
-        return self.cache[key].get_features()
+    def get_features(self, key, timestamp):
+        return self.cache[key].get_features(timestamp)
 
     def flush(self):
         for key in self.cache:
@@ -146,9 +139,7 @@ class AggregationBuckets:
         bucket_index = int((timestamp - self.first_bucket_start_time) / self.window.period_millis)
         return bucket_index
 
-    def advance_window_period(self, advance_to=None):
-        if not advance_to:
-            advance_to = datetime.now().timestamp() * 1000
+    def advance_window_period(self, advance_to):
         desired_bucket_index = int((advance_to - self.first_bucket_start_time) / self.window.period_millis)
         buckets_to_advance = desired_bucket_index - (self.window.total_number_of_buckets - 1)
 
@@ -174,10 +165,10 @@ class AggregationBuckets:
             return 'sum'
         return self.aggregation
 
-    def get_features(self):
+    def get_features(self, timestamp):
         result = {}
 
-        current_time_bucket_index = self.get_bucket_index_by_timestamp(datetime.now().timestamp() * 1000)
+        current_time_bucket_index = self.get_bucket_index_by_timestamp(timestamp)
         aggregated_value = AggregationValue(self.get_aggregation_for_aggregation())
         for i in range(len(self.window.windows_str)):
             window_string = self.window.windows_str[i]
@@ -208,23 +199,23 @@ class AggregationBuckets:
 
 
 class VirtualAggregationBuckets:
-    def __init__(self, name, aggregation, window, args):
+    def __init__(self, name, aggregation, window, base_time, args):
         self.name = name
         self.args = args
         self.aggregation = aggregation
-        self.aggregation_func = get_virtual_aggreagtion_func(aggregation)
+        self.aggregation_func = get_virtual_aggregation_func(aggregation)
         self.window = window
-        self.first_bucket_start_time = self.window.get_window_start_time()
+        self.first_bucket_start_time = self.window.get_window_start_time_by_time(base_time)
         self.last_bucket_start_time = \
             self.first_bucket_start_time + (window.total_number_of_buckets - 1) * window.period_millis
 
     def aggregate(self, timestamp, value):
         pass
 
-    def get_features(self):
+    def get_features(self, timestamp):
         result = {}
 
-        args_results = [list(bucket.get_features().values()) for bucket in self.args]
+        args_results = [list(bucket.get_features(timestamp).values()) for bucket in self.args]
 
         for i in range(len(args_results[0])):
             window_string = self.window.windows_str[i]

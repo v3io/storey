@@ -10,23 +10,6 @@ def append_return(lst, x):
     return lst
 
 
-def validate_window(expected, window):
-    for elem in window:
-        key = elem[0]
-        data = elem[1]
-        for column in data.features:
-            index = 0
-            for bucket in data.features[column]:
-                if len(bucket.data) > 0:
-                    assert expected[key][index] == bucket.data
-
-                index = index + 1
-
-
-def to_millis(t):
-    return t.timestamp() * 1000
-
-
 def test_simple_aggregation_flow():
     controller = build_flow([
         Source(),
@@ -36,7 +19,7 @@ def test_simple_aggregation_flow():
         Reduce([], lambda acc, x: append_return(acc, x)),
     ]).run()
 
-    base_time = datetime.now() - timedelta(minutes=15)
+    base_time = datetime.fromisoformat("2020-07-21T21:40:00")
 
     for i in range(10):
         data = {'col1': i}
@@ -89,7 +72,7 @@ def test_multiple_keys_aggregation_flow():
         Reduce([], lambda acc, x: append_return(acc, x)),
     ]).run()
 
-    base_time = datetime.now() - timedelta(minutes=15)
+    base_time = datetime.fromisoformat("2020-07-21T21:40:00")
 
     for i in range(10):
         data = {'col1': i}
@@ -143,7 +126,7 @@ def test_aggregations_with_filters_flow():
         Reduce([], lambda acc, x: append_return(acc, x)),
     ]).run()
 
-    base_time = datetime.now() - timedelta(minutes=15)
+    base_time = datetime.fromisoformat("2020-07-21T21:40:00")
 
     for i in range(10):
         data = {'col1': i, 'is_valid': i % 2}
@@ -206,7 +189,7 @@ def test_aggregations_with_max_values_flow():
         Reduce([], lambda acc, x: append_return(acc, x)),
     ]).run()
 
-    base_time = datetime.now() - timedelta(hours=3)
+    base_time = datetime.fromisoformat("2020-07-21T21:40:00")
 
     for i in range(10):
         data = {'col1': i}
@@ -242,7 +225,7 @@ def test_simple_aggregation_flow_multiple_fields():
         Reduce([], lambda acc, x: append_return(acc, x)),
     ]).run()
 
-    base_time = datetime.now() - timedelta(minutes=15)
+    base_time = datetime.fromisoformat("2020-07-21T21:40:00")
 
     for i in range(10):
         data = {'col1': i, 'col2': i * 1.2, 'col3': i * 2 + 4}
