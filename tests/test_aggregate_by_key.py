@@ -32,7 +32,7 @@ def test_simple_aggregation_flow():
         Source(),
         # Filter(lambda x: x['col1'] > 3),
         AggregateByKey([FieldAggregator("number_of_stuff", "col1", ["sum", "avg"],
-                                        SlidingWindows(['1h', '2h', '24h'], '10m'), '10m')],
+                                        SlidingWindows(['1h', '2h', '24h'], '10m'))],
                        'table'),
         Map(lambda x: print(x)),
         Reduce([], lambda acc, x: append_return(acc, x)),
@@ -52,7 +52,7 @@ def test_multiple_keys_aggregation_flow():
     controller = build_flow([
         Source(),
         AggregateByKey([FieldAggregator("number_of_stuff", "col1", ["sum", "avg"],
-                                        SlidingWindows(['1h', '2h', '24h'], '10m'), '10m')],
+                                        SlidingWindows(['1h', '2h', '24h'], '10m'))],
                        'table'),
         Map(lambda x: print(x)),
         Reduce([], lambda acc, x: append_return(acc, x)),
@@ -72,7 +72,7 @@ def test_aggregations_with_filters_flow():
     controller = build_flow([
         Source(),
         AggregateByKey([FieldAggregator("number_of_stuff", "col1", ["sum", "avg"],
-                                        SlidingWindows(['1h', '2h', '24h'], '10m'), '10m',
+                                        SlidingWindows(['1h', '2h', '24h'], '10m'),
                                         aggr_filter=lambda element: element['is_valid'] == 0)],
                        'table'),
         Map(lambda x: print(x)),
@@ -90,4 +90,21 @@ def test_aggregations_with_filters_flow():
 
 
 def test_aggregations_with_max_values_flow():
-    pass
+    controller = build_flow([
+        Source(),
+        AggregateByKey([FieldAggregator("num_hours_with_stuff_in_the_last_24h", "col1", ["sum"],
+                                        SlidingWindows(['24h'], '1h'),
+                                        max_value=1)],
+                       'table'),
+        Map(lambda x: print(x)),
+        Reduce([], lambda acc, x: append_return(acc, x)),
+    ]).run()
+
+    base_time = datetime.now() - timedelta(hours=3)
+
+    for i in range(10):
+        data = {'col1': i}
+        controller.emit(data, 'tal', base_time + timedelta(minutes=10*i))
+
+    controller.terminate()
+    aggregates_list = controller.await_termination()

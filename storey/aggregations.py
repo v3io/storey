@@ -61,7 +61,8 @@ class AggregatedStoreElement:
         for aggregation_metadata in aggregates:
             for aggr in aggregation_metadata.get_all_raw_aggregates():
                 self.features[f'{aggregation_metadata.name}_{aggr}'] = \
-                    AggregationBuckets(aggregation_metadata.name, aggr, aggregation_metadata.windows, base_time)
+                    AggregationBuckets(aggregation_metadata.name, aggr, aggregation_metadata.windows, base_time,
+                                       aggregation_metadata.max_value)
 
         # Add all virtual aggregates
         for aggregation_metadata in aggregates:
@@ -114,10 +115,11 @@ class AggregatedStore:
 
 
 class AggregationBuckets:
-    def __init__(self, name, aggregation, window, base_time):
+    def __init__(self, name, aggregation, window, base_time, max_value):
         self.name = name
         self.aggregation = aggregation
         self.window = window
+        self.max_value = max_value
         self.buckets = []
         self.first_bucket_start_time = self.window.get_window_start_time_by_time(base_time)
         self.last_bucket_start_time = \
@@ -129,7 +131,7 @@ class AggregationBuckets:
         self.buckets = []
 
         for _ in range(self.window.total_number_of_buckets):
-            self.buckets.append(AggregationValue(self.aggregation))
+            self.buckets.append(AggregationValue(self.aggregation, self.max_value))
 
     def get_or_advance_bucket_index_by_timestamp(self, timestamp):
         if timestamp < self.last_bucket_start_time + self.window.period_millis:
@@ -157,7 +159,7 @@ class AggregationBuckets:
             else:
                 self.buckets = self.buckets[buckets_to_advance:]
                 for _ in range(buckets_to_advance):
-                    self.buckets.extend([AggregationValue(self.aggregation)])
+                    self.buckets.extend([AggregationValue(self.aggregation, self.max_value)])
 
             self.first_bucket_start_time = \
                 self.first_bucket_start_time + buckets_to_advance * self.window.period_millis
@@ -236,7 +238,7 @@ class VirtualAggregationBuckets:
 
 
 class FieldAggregator:
-    def __init__(self, name, field, aggr, windows, period=None, aggr_filter=None, max_value=None):
+    def __init__(self, name, field, aggr, windows, aggr_filter=None, max_value=None):
         if aggr_filter is not None and not callable(aggr_filter):
             raise TypeError(f'aggr_filter expected to be callable, got {type(aggr_filter)}')
 
@@ -253,11 +255,11 @@ class FieldAggregator:
         self.aggr_filter = aggr_filter
         self.max_value = max_value
 
-        # Parse period, if not provided calculate default period based on smallest window
-        if period:
-            self.period_millis = parse_duration(period)
-        else:
-            self.period_millis = get_default_period_by_window(self.windows[0])
+        # # Parse period, if not provided calculate default period based on smallest window
+        # if period:
+        #     self.period_millis = parse_duration(period)
+        # else:
+        #     self.period_millis = get_default_period_by_window(self.windows[0])
 
     def get_all_raw_aggregates(self):
         raw_aggregates = {}
@@ -284,29 +286,36 @@ class FieldAggregator:
 
 
 class AggregationValue:
-    def __init__(self, aggregation):
+    def __init__(self, aggregation, max_value=None):
         self.aggregation = aggregation
 
         self.value = self.get_default_value()
         self.first_time = datetime.max
         self.last_time = datetime.max
+        self.max_value = max_value
 
     # todo: stdvar, stddrv, avg, zscore
     def aggregate(self, time, value):
         if self.aggregation == 'min':
-            self.value = min(self.value, value)
+            self._set_value(min(self.value, value))
         elif self.aggregation == 'max':
-            self.value = max(self.value, value)
+            self._set_value(max(self.value, value))
         elif self.aggregation == 'sum':
-            self.value = self.value + value
+            self._set_value(self.value + value)
         elif self.aggregation == 'count':
-            self.value = self.value + 1
+            self._set_value(self.value + 1)
         elif self.aggregation == 'last' and time > self.last_time:
-            self.value = value
+            self._set_value(value)
             self.last_time = time
         elif self.aggregation == 'first' and time < self.first_time:
-            self.value = value
+            self._set_value(value)
             self.first_time = time
+
+    def _set_value(self, value):
+        if self.max_value:
+            self.value = min(self.max_value, value)
+        else:
+            self.value = value
 
     def get_default_value(self):
         if self.aggregation == 'max':
