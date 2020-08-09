@@ -3,7 +3,6 @@ from datetime import datetime
 from .aggregation_utils import is_raw_aggregate, get_virtual_aggreagtion_func, get_dependant_aggregates
 from .dtypes import LateDataHandling, EmitEveryEvent
 from .flow import Flow, _termination_obj, Event
-from .utils import parse_duration, get_default_period_by_window
 
 _default_emit_policy = EmitEveryEvent()
 
