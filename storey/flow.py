@@ -158,7 +158,7 @@ class ReadCSV(Flow):
                     if self._skip_header:
                         await f.readline()
                     async for line in f:
-                        parsed_line = list(csv.reader([line]))[0]
+                        parsed_line = next(csv.reader([line]))
                         await self._do_downstream(Event(parsed_line, None, datetime.now()))
             termination_result = await self._do_downstream(_termination_obj)
             self._termination_future.set_result(termination_result)
