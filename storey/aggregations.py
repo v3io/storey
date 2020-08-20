@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from .aggregation_utils import is_raw_aggregate, get_virtual_aggregation_func, get_dependant_aggregates
-from .dtypes import EmitEveryEvent
+from .dtypes import EmitEveryEvent, FixedWindows, SlidingWindows
 from .flow import Flow, _termination_obj, Event
 
 _default_emit_policy = EmitEveryEvent()
@@ -25,7 +25,6 @@ class AggregateByKey(Flow):
 
     async def _do(self, event):
         if event == _termination_obj:
-            self._terminate_worker = True
             return await self._do_downstream(_termination_obj)
 
         element = event.element
@@ -139,6 +138,10 @@ class AggregationBuckets:
         bucket_index = int((timestamp - self.first_bucket_start_time) / self.window.period_millis)
         return bucket_index
 
+    def get_nearest_window_index_by_timestamp(self, timestamp, window_millis):
+        bucket_index = int((timestamp - self.first_bucket_start_time) / window_millis)
+        return bucket_index
+
     def advance_window_period(self, advance_to):
         desired_bucket_index = int((advance_to - self.first_bucket_start_time) / self.window.period_millis)
         buckets_to_advance = desired_bucket_index - (self.window.total_number_of_buckets - 1)
@@ -170,17 +173,24 @@ class AggregationBuckets:
 
         current_time_bucket_index = self.get_bucket_index_by_timestamp(timestamp)
         aggregated_value = AggregationValue(self.get_aggregation_for_aggregation())
-        for i in range(len(self.window.windows_str)):
-            window_string = self.window.windows_str[i]
+        for i in range(len(self.window.windows)):
+            window_string = self.window.windows[i][1]
+            window_millis = self.window.windows[i][0]
 
             # In case the current bucket is outside our time range just create a feature with the current aggregated
             # value
             if current_time_bucket_index < 0:
                 result[f'{self.name}_{self.aggregation}_{window_string}'] = aggregated_value.get_value()
 
-            window_millis = self.window.windows_millis[i]
+            # if isinstance(self.window, SlidingWindows):
+            #     number_of_buckets_backwards = int(window_millis / self.window.period_millis)
+            #     last_bucket_to_aggregate = current_time_bucket_index - number_of_buckets_backwards
+            # elif isinstance(self.window, FixedWindows):
+            #     nearest_window = self.get_nearest_window_index_by_timestamp(timestamp, window_millis)
+
             number_of_buckets_backwards = int(window_millis / self.window.period_millis)
             last_bucket_to_aggregate = current_time_bucket_index - number_of_buckets_backwards
+
             if last_bucket_to_aggregate < 0:
                 last_bucket_to_aggregate = 0
 
@@ -218,7 +228,7 @@ class VirtualAggregationBuckets:
         args_results = [list(bucket.get_features(timestamp).values()) for bucket in self.args]
 
         for i in range(len(args_results[0])):
-            window_string = self.window.windows_str[i]
+            window_string = self.window.windows[i][1]
             current_args = []
             for window_result in args_results:
                 current_args.append(window_result[i])
@@ -245,12 +255,6 @@ class FieldAggregator:
         self.aggr_filter = aggr_filter
         self.max_value = max_value
 
-        # # Parse period, if not provided calculate default period based on smallest window
-        # if period:
-        #     self.period_millis = parse_duration(period)
-        # else:
-        #     self.period_millis = get_default_period_by_window(self.windows[0])
-
     def get_all_raw_aggregates(self):
         raw_aggregates = {}
 
@@ -265,8 +269,8 @@ class FieldAggregator:
 
     def get_all_feature_names(self):
         for aggr in self.aggregations:
-            for window in self.windows.windows_str:
-                yield get_cache_key(self.name, aggr, window)
+            for window in self.windows.windows:
+                yield get_cache_key(self.name, aggr, window[1])
 
     def should_aggregate(self, element):
         if not self.aggr_filter:
@@ -284,7 +288,6 @@ class AggregationValue:
         self.last_time = datetime.max
         self.max_value = max_value
 
-    # todo: stdvar, stddrv, avg, zscore
     def aggregate(self, time, value):
         if self.aggregation == 'min':
             self._set_value(min(self.value, value))

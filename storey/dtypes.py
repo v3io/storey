@@ -45,21 +45,30 @@ class SlidingWindow(WindowBase):
 
 
 class WindowsBase:
-    def __init__(self, period, max_window, smallest_window, windows_str):
-        self.max_window_millis = max_window
+    def __init__(self, period, smallest_window, windows):
+        self.max_window_millis = windows[-1][0]
         self.smallest_window_millis = smallest_window
         self.period_millis = period
-        self.windows_str = windows_str
-        self.windows_millis = [parse_duration(win) for win in windows_str]
+        self.windows = windows  # list of tuples of the form (3600000, '1h')
         self.total_number_of_buckets = int(self.max_window_millis / self.period_millis)
+
+
+def sort_windows_and_convert_to_millis(windows):
+    if len(windows) == 0:
+        raise ValueError('Windows list can not be empty')
+
+    # Validate windows order
+    windows_tuples = [(parse_duration(window), window) for window in windows]
+    windows_tuples.sort(key=lambda tup: tup[0])
+    return windows_tuples
 
 
 class FixedWindows(WindowsBase):
     def __init__(self, windows):
-        max_window_millis = parse_duration(windows[-1])
-        smallest_window_millis = parse_duration(windows[0])
+        windows_tuples = sort_windows_and_convert_to_millis(windows)
+        smallest_window_millis = windows_tuples[0][0]
         WindowsBase.__init__(self, smallest_window_millis / bucketPerWindow,
-                             max_window_millis, smallest_window_millis, windows)
+                             smallest_window_millis, windows_tuples)
 
     def get_period_by_time(self, timestamp):
         return int(timestamp / self.period_millis) * self.period_millis
@@ -70,9 +79,8 @@ class FixedWindows(WindowsBase):
 
 class SlidingWindows(WindowsBase):
     def __init__(self, windows, period=None):
-
-        max_window_millis = parse_duration(windows[-1])
-        smallest_window_millis = parse_duration(windows[0])
+        windows_tuples = sort_windows_and_convert_to_millis(windows)
+        smallest_window_millis = windows_tuples[0][0]
 
         if period:
             period_millis = parse_duration(period)
@@ -85,7 +93,7 @@ class SlidingWindows(WindowsBase):
         else:
             period_millis = smallest_window_millis / bucketPerWindow
 
-        WindowsBase.__init__(self, period_millis, max_window_millis, smallest_window_millis, windows)
+        WindowsBase.__init__(self, period_millis, smallest_window_millis, windows_tuples)
 
     def get_window_start_time_by_time(self, timestamp):
         return timestamp
