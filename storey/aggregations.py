@@ -172,7 +172,11 @@ class AggregationBuckets:
         result = {}
 
         current_time_bucket_index = self.get_bucket_index_by_timestamp(timestamp)
+        if isinstance(self.window, FixedWindows):
+            current_time_bucket_index = self.get_bucket_index_by_timestamp(self.window.round_up_time_to_window(timestamp) - 1)
+
         aggregated_value = AggregationValue(self.get_aggregation_for_aggregation())
+        prev_windows_millis = 0
         for i in range(len(self.window.windows)):
             window_string = self.window.windows[i][1]
             window_millis = self.window.windows[i][0]
@@ -182,14 +186,8 @@ class AggregationBuckets:
             if current_time_bucket_index < 0:
                 result[f'{self.name}_{self.aggregation}_{window_string}'] = aggregated_value.get_value()
 
-            # if isinstance(self.window, SlidingWindows):
-            #     number_of_buckets_backwards = int(window_millis / self.window.period_millis)
-            #     last_bucket_to_aggregate = current_time_bucket_index - number_of_buckets_backwards
-            # elif isinstance(self.window, FixedWindows):
-            #     nearest_window = self.get_nearest_window_index_by_timestamp(timestamp, window_millis)
-
-            number_of_buckets_backwards = int(window_millis / self.window.period_millis)
-            last_bucket_to_aggregate = current_time_bucket_index - number_of_buckets_backwards
+            number_of_buckets_backwards = int((window_millis - prev_windows_millis) / self.window.period_millis)
+            last_bucket_to_aggregate = current_time_bucket_index - number_of_buckets_backwards + 1
 
             if last_bucket_to_aggregate < 0:
                 last_bucket_to_aggregate = 0
@@ -200,10 +198,11 @@ class AggregationBuckets:
                     aggregated_value.aggregate(t, v)
 
             # advance the time bucket, so that next iteration won't calculate the same buckets again
-            current_time_bucket_index = current_time_bucket_index - number_of_buckets_backwards
+            current_time_bucket_index = last_bucket_to_aggregate - 1
 
             # create a feature for the current time window
             result[f'{self.name}_{self.aggregation}_{window_string}'] = aggregated_value.get_value()[1]
+            prev_windows_millis = window_millis
 
         return result
 

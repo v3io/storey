@@ -22,6 +22,23 @@ def parse_duration(string_time):
     return int(string_time[:-1]) * multiplier
 
 
+def get_one_unit_of_duration(string_time):
+    unit = string_time[-1]
+
+    if unit == 's':
+        multiplier = 1000
+    elif unit == 'm':
+        multiplier = 60 * 1000
+    elif unit == 'h':
+        multiplier = 60 * 60 * 1000
+    elif unit == 'd':
+        multiplier = 24 * 60 * 60 * 1000
+    else:
+        raise ValueError(f'Failed to parse time "{string_time}"')
+
+    return multiplier
+
+
 def convert_array_tlv(a):
     """
     get's the array typed array to convert to a blob value of an array, encode it to base64 from base10 with the following format-
