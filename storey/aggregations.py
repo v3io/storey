@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from .aggregation_utils import is_raw_aggregate, get_virtual_aggregation_func, get_dependant_aggregates
-from .dtypes import EmitEveryEvent, FixedWindows, SlidingWindows
+from .dtypes import EmitEveryEvent, FixedWindows
 from .flow import Flow, _termination_obj, Event
 
 _default_emit_policy = EmitEveryEvent()
