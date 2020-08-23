@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 from storey import build_flow, Source, Reduce
 from storey.aggregations import AggregateByKey, FieldAggregator
-from storey.dtypes import SlidingWindows, FixedWindows
+from storey.dtypes import SlidingWindows, FixedWindows, EmitAfterMaxEvent
 
 test_base_time = datetime.fromisoformat("2020-07-21T21:40:00")
 
@@ -326,6 +326,39 @@ def test_fixed_window_simple_aggregation_flow():
                          'number_of_stuff_count_24h': 9},
                         {'col1': 9, 'number_of_stuff_count_1h': 2, 'number_of_stuff_count_2h': 4, 'number_of_stuff_count_3h': 6,
                          'number_of_stuff_count_24h': 10}]
+
+    assert actual == expected_results, \
+        f'actual did not match expected. \n actual: {actual} \n expected: {expected_results}'
+
+
+def test_emit_max_event_sliding_window_multiple_keys_aggregation_flow():
+    controller = build_flow([
+        Source(),
+        AggregateByKey([FieldAggregator("number_of_stuff", "col1", ["sum", "avg"],
+                                        SlidingWindows(['1h', '2h', '24h'], '10m'))],
+                       'table', emit_policy=EmitAfterMaxEvent(3)),
+        Reduce([], lambda acc, x: append_return(acc, x)),
+    ]).run()
+
+    for i in range(12):
+        data = {'col1': i}
+        controller.emit(data, f'{i % 2}', test_base_time + timedelta(minutes=i))
+
+    controller.terminate()
+    actual = controller.await_termination()
+    expected_results = [
+        {'col1': 4, 'number_of_stuff_sum_1h': 6, 'number_of_stuff_sum_2h': 6, 'number_of_stuff_sum_24h': 6, 'number_of_stuff_count_1h': 3,
+         'number_of_stuff_count_2h': 3, 'number_of_stuff_count_24h': 3, 'number_of_stuff_avg_1h': 2.0, 'number_of_stuff_avg_2h': 2.0,
+         'number_of_stuff_avg_24h': 2.0},
+        {'col1': 5, 'number_of_stuff_sum_1h': 9, 'number_of_stuff_sum_2h': 9, 'number_of_stuff_sum_24h': 9, 'number_of_stuff_count_1h': 3,
+         'number_of_stuff_count_2h': 3, 'number_of_stuff_count_24h': 3, 'number_of_stuff_avg_1h': 3.0, 'number_of_stuff_avg_2h': 3.0,
+         'number_of_stuff_avg_24h': 3.0},
+        {'col1': 10, 'number_of_stuff_sum_1h': 30, 'number_of_stuff_sum_2h': 30, 'number_of_stuff_sum_24h': 30,
+         'number_of_stuff_count_1h': 6, 'number_of_stuff_count_2h': 6, 'number_of_stuff_count_24h': 6, 'number_of_stuff_avg_1h': 5.0,
+         'number_of_stuff_avg_2h': 5.0, 'number_of_stuff_avg_24h': 5.0},
+        {'col1': 11, 'number_of_stuff_sum_1h': 36, 'number_of_stuff_sum_2h': 36, 'number_of_stuff_sum_24h': 36,
+         'number_of_stuff_count_1h': 6, 'number_of_stuff_count_2h': 6, 'number_of_stuff_count_24h': 6, 'number_of_stuff_avg_1h': 6.0,
+         'number_of_stuff_avg_2h': 6.0, 'number_of_stuff_avg_24h': 6.0}]
 
     assert actual == expected_results, \
         f'actual did not match expected. \n actual: {actual} \n expected: {expected_results}'

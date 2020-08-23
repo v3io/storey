@@ -116,11 +116,15 @@ class EmitBase:
 
 
 class EmitAfterPeriod(EmitBase):
-    pass
+    def __init__(self, delay_in_seconds=0, emission_type=EmissionType.All):
+        self.delay_in_seconds = delay_in_seconds
+        EmitBase.__init__(self, emission_type)
 
 
 class EmitAfterWindow(EmitBase):
-    pass
+    def __init__(self, delay_in_seconds=0, emission_type=EmissionType.All):
+        self.delay_in_seconds = delay_in_seconds
+        EmitBase.__init__(self, emission_type)
 
 
 class EmitAfterMaxEvent(EmitBase):

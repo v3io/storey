@@ -1,18 +1,24 @@
+import asyncio
 from datetime import datetime
 
 from .aggregation_utils import is_raw_aggregate, get_virtual_aggregation_func, get_dependant_aggregates
-from .dtypes import EmitEveryEvent, FixedWindows
+from .dtypes import EmitEveryEvent, FixedWindows, EmitAfterPeriod, EmitAfterWindow, EmitAfterMaxEvent
 from .flow import Flow, _termination_obj, Event
 
 _default_emit_policy = EmitEveryEvent()
 
 
 class AggregateByKey(Flow):
-    def __init__(self, aggregates, table, key=None):
+    def __init__(self, aggregates, table, key=None, emit_policy=_default_emit_policy):
         Flow.__init__(self)
         self._aggregates_store = AggregatedStore(aggregates)
         self.table = table
         self.aggregates_metadata = aggregates
+
+        self._emit_policy = emit_policy
+        self._events_in_batch = {}
+        self._emit_worker_running = False
+        self._terminate_worker = False
 
         self.key_extractor = None
         if key:
@@ -25,21 +31,58 @@ class AggregateByKey(Flow):
 
     async def _do(self, event):
         if event == _termination_obj:
+            self._terminate_worker = True
             return await self._do_downstream(_termination_obj)
 
+        if (not self._emit_worker_running) and \
+                not (isinstance(self._emit_policy, EmitEveryEvent) or isinstance(self._emit_policy, EmitAfterMaxEvent)):
+            asyncio.get_running_loop().create_task(self._emit_worker())
+            self._emit_worker_running = True
+
         element = event.element
-        event_time = event.time
         key = event.key
         if self.key_extractor:
             key = self.key_extractor(element)
 
-        if isinstance(event_time, datetime):
-            event_time = event_time.timestamp() * 1000
-        self._aggregates_store.aggregate(key, element, event_time)
+        self._aggregates_store.aggregate(key, element, event.time)
 
+        if isinstance(self._emit_policy, EmitEveryEvent):
+            await self._emit_event(key, event.time, element)
+        elif isinstance(self._emit_policy, EmitAfterMaxEvent):
+            self._events_in_batch[key] = self._events_in_batch.get(key, 0) + 1
+            if self._events_in_batch[key] == self._emit_policy.max_events:
+                await self._emit_event(key, event.time, element)
+                self._events_in_batch[key] = 0
+
+    # Emit a single event for the requested key
+    async def _emit_event(self, key, event_time, element):
         features = self._aggregates_store.get_features(key, event_time)
         element.update(features)
-        await self._do_downstream(Event(element, None, None))
+        await self._do_downstream(Event(element, None, event_time))
+
+    # Emit a multiple events for every key in the store with the current time
+    async def _emit_all_events(self, timestamp):
+        for key in self._aggregates_store.get_keys():
+            await self._emit_event(key, timestamp, {'key': key, 'time': timestamp})
+
+    async def _emit_worker(self):
+        if isinstance(self._emit_policy, EmitAfterPeriod):
+            seconds_to_sleep_between_emits = self.aggregates_metadata[0].windows.period_millis / 1000
+        elif isinstance(self._emit_policy, EmitAfterWindow):
+            seconds_to_sleep_between_emits = self.aggregates_metadata[0].windows.windows[0][0] / 1000
+        else:
+            raise TypeError(f'emit policy "{type(self._emit_policy)}" is not supported')
+
+        current_time = datetime.now().timestamp()
+        next_emit_time = int(
+            current_time / seconds_to_sleep_between_emits) * seconds_to_sleep_between_emits + seconds_to_sleep_between_emits
+        next_sleep_interval = next_emit_time - current_time + self._emit_policy.delay_in_seconds
+
+        while not self._terminate_worker:
+            await asyncio.sleep(next_sleep_interval)
+            await self._emit_all_events(next_emit_time * 1000)
+            next_sleep_interval = seconds_to_sleep_between_emits
+            next_emit_time = next_emit_time + seconds_to_sleep_between_emits
 
 
 class AggregatedStoreElement:
@@ -92,13 +135,22 @@ class AggregatedStore:
         return iter(self.cache.items())
 
     def aggregate(self, key, data, timestamp):
+        if isinstance(timestamp, datetime):
+            timestamp = timestamp.timestamp() * 1000
+
         if key not in self.cache:
             self.cache[key] = AggregatedStoreElement(key, self.aggregates, timestamp)
 
         self.cache[key].aggregate(data, timestamp)
 
     def get_features(self, key, timestamp):
+        if isinstance(timestamp, datetime):
+            timestamp = timestamp.timestamp() * 1000
+
         return self.cache[key].get_features(timestamp)
+
+    def get_keys(self):
+        return self.cache.keys()
 
     def flush(self):
         for key in self.cache:
