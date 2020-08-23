@@ -398,7 +398,7 @@ class JoinWithHttp(Flow):
                 response_body = await response.text()
                 joined_element = self._join_from_response(event.element, HttpResponse(response.status, response_body))
                 if joined_element is not None:
-                    await self._do_downstream(Event(joined_element, event.key, event.time, event.future))
+                    await self._do_downstream(Event(joined_element, event.key, event.time, event.awaitable_result))
         except BaseException as ex:
             if not self._q.empty():
                 await self._q.get()
