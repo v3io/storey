@@ -11,7 +11,7 @@ _default_emit_policy = EmitEveryEvent()
 class AggregateByKey(Flow):
     def __init__(self, aggregates, table, key=None, emit_policy=_default_emit_policy):
         Flow.__init__(self)
-        self._aggregates_store = AggregatedStore(aggregates)
+        self._aggregates_store = AggregateStore(aggregates)
         self.table = table
         self.aggregates_metadata = aggregates
 
@@ -34,8 +34,9 @@ class AggregateByKey(Flow):
             self._terminate_worker = True
             return await self._do_downstream(_termination_obj)
 
+        # check whether a background loop is needed, if so create start one
         if (not self._emit_worker_running) and \
-                not (isinstance(self._emit_policy, EmitEveryEvent) or isinstance(self._emit_policy, EmitAfterMaxEvent)):
+                (isinstance(self._emit_policy, EmitAfterPeriod) or isinstance(self._emit_policy, EmitAfterWindow)):
             asyncio.get_running_loop().create_task(self._emit_worker())
             self._emit_worker_running = True
 
@@ -73,28 +74,25 @@ class AggregateByKey(Flow):
         else:
             raise TypeError(f'emit policy "{type(self._emit_policy)}" is not supported')
 
-        current_time = datetime.now().timestamp()
-        next_emit_time = int(
-            current_time / seconds_to_sleep_between_emits) * seconds_to_sleep_between_emits + seconds_to_sleep_between_emits
-        next_sleep_interval = next_emit_time - current_time + self._emit_policy.delay_in_seconds
-
         while not self._terminate_worker:
+            current_time = datetime.now().timestamp()
+            next_emit_time = int(
+                current_time / seconds_to_sleep_between_emits) * seconds_to_sleep_between_emits + seconds_to_sleep_between_emits
+            next_sleep_interval = next_emit_time - current_time + self._emit_policy.delay_in_seconds
             await asyncio.sleep(next_sleep_interval)
             await self._emit_all_events(next_emit_time * 1000)
-            next_sleep_interval = seconds_to_sleep_between_emits
-            next_emit_time = next_emit_time + seconds_to_sleep_between_emits
 
 
 class AggregatedStoreElement:
     def __init__(self, key, aggregates, base_time):
-        self.features = {}
+        self.aggregation_buckets = {}
         self.key = key
         self.aggregates = aggregates
 
         # Add all raw aggregates, including aggregates not explicitly requested.
         for aggregation_metadata in aggregates:
             for aggr in aggregation_metadata.get_all_raw_aggregates():
-                self.features[f'{aggregation_metadata.name}_{aggr}'] = \
+                self.aggregation_buckets[f'{aggregation_metadata.name}_{aggr}'] = \
                     AggregationBuckets(aggregation_metadata.name, aggr, aggregation_metadata.windows, base_time,
                                        aggregation_metadata.max_value)
 
@@ -105,8 +103,8 @@ class AggregatedStoreElement:
                     dependant_aggregate_names = get_dependant_aggregates(aggr)
                     dependant_buckets = []
                     for dep in dependant_aggregate_names:
-                        dependant_buckets.append(self.features[f'{aggregation_metadata.name}_{dep}'])
-                    self.features[f'{aggregation_metadata.name}_{aggr}'] = \
+                        dependant_buckets.append(self.aggregation_buckets[f'{aggregation_metadata.name}_{dep}'])
+                    self.aggregation_buckets[f'{aggregation_metadata.name}_{aggr}'] = \
                         VirtualAggregationBuckets(aggregation_metadata.name, aggr, aggregation_metadata.windows,
                                                   base_time, dependant_buckets)
 
@@ -116,17 +114,17 @@ class AggregatedStoreElement:
             if aggregation_metadata.should_aggregate(data):
                 curr_value = aggregation_metadata.value_extractor(data)
                 for aggr in aggregation_metadata.get_all_raw_aggregates():
-                    self.features[f'{aggregation_metadata.name}_{aggr}'].aggregate(timestamp, curr_value)
+                    self.aggregation_buckets[f'{aggregation_metadata.name}_{aggr}'].aggregate(timestamp, curr_value)
 
     def get_features(self, timestamp):
         result = {}
-        for feature in self.features.values():
-            result.update(feature.get_features(timestamp))
+        for aggregation_bucket in self.aggregation_buckets.values():
+            result.update(aggregation_bucket.get_features(timestamp))
 
         return result
 
 
-class AggregatedStore:
+class AggregateStore:
     def __init__(self, aggregates):
         self.cache = {}
         self.aggregates = aggregates
@@ -151,10 +149,6 @@ class AggregatedStore:
 
     def get_keys(self):
         return self.cache.keys()
-
-    def flush(self):
-        for key in self.cache:
-            self.cache[key].flush()
 
 
 class AggregationBuckets:
@@ -318,11 +312,6 @@ class FieldAggregator:
 
         return raw_aggregates.keys()
 
-    def get_all_feature_names(self):
-        for aggr in self.aggregations:
-            for window in self.windows.windows:
-                yield get_cache_key(self.name, aggr, window[1])
-
     def should_aggregate(self, element):
         if not self.aggr_filter:
             return True
@@ -366,6 +355,8 @@ class AggregationValue:
             return float('-inf')
         elif self.aggregation == 'min':
             return float('inf')
+        elif self.aggregation == 'first' or self.aggregation == 'last':
+            return None
         else:
             return 0
 

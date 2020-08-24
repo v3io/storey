@@ -301,7 +301,7 @@ def test_fixed_window_simple_aggregation_flow():
     ]).run()
 
     for i in range(10):
-        data = {'col1': i}  # , 'time': (test_base_time + timedelta(minutes=10 * i)).timestamp()}
+        data = {'col1': i}
         controller.emit(data, 'tal', test_base_time + timedelta(minutes=25 * i))
 
     controller.terminate()
