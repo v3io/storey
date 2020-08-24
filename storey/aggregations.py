@@ -365,7 +365,3 @@ class AggregationValue:
         if self.aggregation == 'first':
             value_time = self.first_time
         return value_time, self.value
-
-
-def get_cache_key(feature_name, aggregate, window_str):
-    return f'{feature_name}_{aggregate}_{window_str}'
