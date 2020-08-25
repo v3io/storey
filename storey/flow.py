@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import collections
+import csv
 import json
 import os
 import queue
@@ -10,6 +11,7 @@ import time
 from datetime import datetime
 import random
 
+import aiofiles
 import aiohttp
 
 _termination_obj = object()
@@ -54,7 +56,18 @@ class Flow:
             await task
 
 
-Event = collections.namedtuple('Event', 'element key time')
+Event = collections.namedtuple('Event', 'element key time awaitable_result')
+
+
+class AwaitableResult:
+    def __init__(self):
+        self._q = queue.Queue(1)
+
+    def await_result(self):
+        return self._q.get()
+
+    def _set_result(self, element):
+        self._q.put(element)
 
 
 class FlowController:
@@ -62,13 +75,25 @@ class FlowController:
         self._emit_fn = emit_fn
         self._await_termination_fn = await_termination_fn
 
-    def emit(self, element, key=None, event_time=None):
+    def emit(self, element, key=None, event_time=None, return_awaitable_result=False):
         if event_time is None:
             event_time = time.time()
-        self._emit_fn(Event(element, key, event_time))
+        awaitable_result = None
+        if return_awaitable_result:
+            awaitable_result = AwaitableResult()
+        self._emit_fn(Event(element, key, event_time, awaitable_result))
+        return awaitable_result
 
     def terminate(self):
         self._emit_fn(_termination_obj)
+
+    def await_termination(self):
+        return self._await_termination_fn()
+
+
+class FlowAwaiter:
+    def __init__(self, await_termination_fn):
+        self._await_termination_fn = await_termination_fn
 
     def await_termination(self):
         return self._await_termination_fn()
@@ -128,6 +153,55 @@ class Source(Flow):
         return FlowController(self._emit, raise_error_or_return_termination_result)
 
 
+class ReadCSV(Flow):
+    def __init__(self, paths, skip_header=False, **kwargs):
+        super().__init__(**kwargs)
+        if isinstance(paths, str):
+            paths = [paths]
+        self._paths = paths
+        self._skip_header = skip_header
+
+        self._termination_q = queue.Queue(1)
+        self._ex = None
+
+    async def _run_loop(self):
+        self._termination_future = asyncio.futures.Future()
+
+        try:
+            for path in self._paths:
+                async with aiofiles.open(path, mode='r') as f:
+                    if self._skip_header:
+                        await f.readline()
+                    async for line in f:
+                        parsed_line = next(csv.reader([line]))
+                        await self._do_downstream(Event(parsed_line, None, datetime.now(), None))
+            termination_result = await self._do_downstream(_termination_obj)
+            self._termination_future.set_result(termination_result)
+        except BaseException as ex:
+            self._ex = ex
+            self._termination_future.set_result(None)
+
+    def _loop_thread_main(self):
+        asyncio.run(self._run_loop())
+        self._termination_q.put(self._ex)
+
+    def _raise_on_error(self, ex):
+        if ex:
+            raise FlowError('Flow execution terminated due to an error') from self._ex
+
+    def run(self):
+        super().run()
+
+        thread = threading.Thread(target=self._loop_thread_main)
+        thread.start()
+
+        def raise_error_or_return_termination_result():
+            self._raise_on_error(self._termination_q.get())
+            return self._termination_future.result()
+
+        return FlowAwaiter(raise_error_or_return_termination_result)
+
+
 class UnaryFunctionFlow(Flow):
     def __init__(self, fn, **kwargs):
         super().__init__(**kwargs)
@@ -156,7 +230,7 @@ class UnaryFunctionFlow(Flow):
 
 class Map(UnaryFunctionFlow):
     async def _do_internal(self, event, mapped_element):
-        mapped_event = Event(mapped_element, event.key, event.time)
+        mapped_event = Event(mapped_element, event.key, event.time, event.awaitable_result)
         await self._do_downstream(mapped_event)
 
 
@@ -169,7 +243,7 @@ class Filter(UnaryFunctionFlow):
 class FlatMap(UnaryFunctionFlow):
     async def _do_internal(self, event, mapped_elements):
         for mapped_element in mapped_elements:
-            mapped_event = Event(mapped_element, event.key, event.time)
+            mapped_event = Event(mapped_element, event.key, event.time, event.awaitable_result)
             await self._do_downstream(mapped_event)
 
 
@@ -202,8 +276,15 @@ class FunctionWithStateFlow(Flow):
 
 class MapWithState(FunctionWithStateFlow):
     async def _do_internal(self, event, mapped_element):
-        mapped_event = Event(mapped_element, event.key, event.time)
+        mapped_event = Event(mapped_element, event.key, event.time, event.awaitable_result)
         await self._do_downstream(mapped_event)
+
+
+class Complete(Flow):
+    async def _do(self, event):
+        await self._do_downstream(event)
+        if event is not _termination_obj:
+            event.awaitable_result._set_result(event.element)
 
 
 class Reduce(Flow):
@@ -317,7 +398,7 @@ class JoinWithHttp(Flow):
                 response_body = await response.text()
                 joined_element = self._join_from_response(event.element, HttpResponse(response.status, response_body))
                 if joined_element is not None:
-                    await self._do_downstream(Event(joined_element, event.key, event.time))
+                    await self._do_downstream(Event(joined_element, event.key, event.time, event.awaitable_result))
         except BaseException as ex:
             if not self._q.empty():
                 await self._q.get()
