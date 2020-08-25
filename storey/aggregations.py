@@ -48,23 +48,23 @@ class AggregateByKey(Flow):
         self._aggregates_store.aggregate(key, element, event.time)
 
         if isinstance(self._emit_policy, EmitEveryEvent):
-            await self._emit_event(key, event.time, element)
+            await self._emit_event(key, event)
         elif isinstance(self._emit_policy, EmitAfterMaxEvent):
             self._events_in_batch[key] = self._events_in_batch.get(key, 0) + 1
             if self._events_in_batch[key] == self._emit_policy.max_events:
-                await self._emit_event(key, event.time, element)
+                await self._emit_event(key, event)
                 self._events_in_batch[key] = 0
 
     # Emit a single event for the requested key
-    async def _emit_event(self, key, event_time, element):
-        features = self._aggregates_store.get_features(key, event_time)
-        element.update(features)
-        await self._do_downstream(Event(element, None, event_time))
+    async def _emit_event(self, key, event):
+        features = self._aggregates_store.get_features(key, event.time)
+        event.element.update(features)
+        await self._do_downstream(Event(event.element, key, event.time, event.awaitable_result))
 
     # Emit multiple events for every key in the store with the current time
     async def _emit_all_events(self, timestamp):
         for key in self._aggregates_store.get_keys():
-            await self._emit_event(key, timestamp, {'key': key, 'time': timestamp})
+            await self._emit_event(key, Event({'key': key, 'time': timestamp}, key, timestamp, None))
 
     async def _emit_worker(self):
         if isinstance(self._emit_policy, EmitAfterPeriod):
