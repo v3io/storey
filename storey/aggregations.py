@@ -61,7 +61,7 @@ class AggregateByKey(Flow):
         element.update(features)
         await self._do_downstream(Event(element, None, event_time))
 
-    # Emit a multiple events for every key in the store with the current time
+    # Emit multiple events for every key in the store with the current time
     async def _emit_all_events(self, timestamp):
         for key in self._aggregates_store.get_keys():
             await self._emit_event(key, timestamp, {'key': key, 'time': timestamp})
@@ -72,15 +72,19 @@ class AggregateByKey(Flow):
         elif isinstance(self._emit_policy, EmitAfterWindow):
             seconds_to_sleep_between_emits = self.aggregates_metadata[0].windows.windows[0][0] / 1000
         else:
-            raise TypeError(f'emit policy "{type(self._emit_policy)}" is not supported')
+            raise TypeError(f'Emit policy "{type(self._emit_policy)}" is not supported')
+
+        current_time = datetime.now().timestamp()
+        next_emit_time = int(
+            current_time / seconds_to_sleep_between_emits) * seconds_to_sleep_between_emits + seconds_to_sleep_between_emits
 
         while not self._terminate_worker:
             current_time = datetime.now().timestamp()
-            next_emit_time = int(
-                current_time / seconds_to_sleep_between_emits) * seconds_to_sleep_between_emits + seconds_to_sleep_between_emits
             next_sleep_interval = next_emit_time - current_time + self._emit_policy.delay_in_seconds
-            await asyncio.sleep(next_sleep_interval)
+            if next_sleep_interval > 0:
+                await asyncio.sleep(next_sleep_interval)
             await self._emit_all_events(next_emit_time * 1000)
+            next_emit_time = next_emit_time + seconds_to_sleep_between_emits
 
 
 class AggregatedStoreElement:
@@ -179,7 +183,7 @@ class AggregationBuckets:
             return self.window.total_number_of_buckets - 1  # return last index
 
     #  Get the index of the bucket corresponding to the requested timestamp
-    #  Not: This method can return indexes outside the 'buckets' array
+    #  Note: This method can return indexes outside the 'buckets' array
     def get_bucket_index_by_timestamp(self, timestamp):
         bucket_index = int((timestamp - self.first_bucket_start_time) / self.window.period_millis)
         return bucket_index
@@ -323,32 +327,32 @@ class AggregationValue:
     def __init__(self, aggregation, max_value=None):
         self.aggregation = aggregation
 
-        self.value = self.get_default_value()
-        self.first_time = datetime.max
-        self.last_time = datetime.max
-        self.max_value = max_value
+        self._value = self.get_default_value()
+        self._first_time = datetime.max
+        self._last_time = datetime.max
+        self._max_value = max_value
 
     def aggregate(self, time, value):
         if self.aggregation == 'min':
-            self._set_value(min(self.value, value))
+            self._set_value(min(self._value, value))
         elif self.aggregation == 'max':
-            self._set_value(max(self.value, value))
+            self._set_value(max(self._value, value))
         elif self.aggregation == 'sum':
-            self._set_value(self.value + value)
+            self._set_value(self._value + value)
         elif self.aggregation == 'count':
-            self._set_value(self.value + 1)
-        elif self.aggregation == 'last' and time > self.last_time:
+            self._set_value(self._value + 1)
+        elif self.aggregation == 'last' and time > self._last_time:
             self._set_value(value)
-            self.last_time = time
-        elif self.aggregation == 'first' and time < self.first_time:
+            self._last_time = time
+        elif self.aggregation == 'first' and time < self._first_time:
             self._set_value(value)
-            self.first_time = time
+            self._first_time = time
 
     def _set_value(self, value):
-        if self.max_value:
-            self.value = min(self.max_value, value)
+        if self._max_value:
+            self._value = min(self._max_value, value)
         else:
-            self.value = value
+            self._value = value
 
     def get_default_value(self):
         if self.aggregation == 'max':
@@ -361,7 +365,7 @@ class AggregationValue:
             return 0
 
     def get_value(self):
-        value_time = self.last_time
+        value_time = self._last_time
         if self.aggregation == 'first':
-            value_time = self.first_time
-        return value_time, self.value
+            value_time = self._first_time
+        return value_time, self._value

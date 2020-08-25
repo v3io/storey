@@ -66,7 +66,7 @@ def sort_windows_and_convert_to_millis(windows):
 class FixedWindows(WindowsBase):
     def __init__(self, windows):
         windows_tuples = sort_windows_and_convert_to_millis(windows)
-        # the period should be a divider of a 1 unit from the smallest window,
+        # The period should be a divisor of the unit of the smallest window,
         # for example if the smallest request window is 2h, the period will be 1h / `bucketPerWindow`
         self.smallest_window_unit_millis = get_one_unit_of_duration(windows_tuples[0][1])
         WindowsBase.__init__(self, self.smallest_window_unit_millis / bucketPerWindow, windows_tuples)
