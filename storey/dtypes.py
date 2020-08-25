@@ -88,13 +88,13 @@ class SlidingWindows(WindowsBase):
         if period:
             period_millis = parse_duration(period)
 
-            # Verify the given period is a divider of the windows
+            # Verify the given period is a divisor of the windows
             for window in windows:
                 if not parse_duration(window) % period_millis == 0:
-                    raise Exception(
-                        f'period must be a divider of every window, but period {period} does not divide {window}')
+                    raise ValueError(
+                        f'Period must be a divisor of every window, but period {period} does not divide {window}')
         else:
-            # the period should be a divider of a 1 unit from the smallest window,
+            # The period should be a divisor of the unit of the smallest window,
             # for example if the smallest request window is 2h, the period will be 1h / `bucketPerWindow`
             smallest_window_unit_millis = get_one_unit_of_duration(windows_tuples[0][1])
             period_millis = smallest_window_unit_millis / bucketPerWindow
