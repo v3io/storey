@@ -175,10 +175,13 @@ class ReadCSV(Flow):
             for path in self._paths:
                 async with aiofiles.open(path, mode='r') as f:
                     header = None
+                    reverse_header = None
                     if self._with_header:
                         line = await f.readline()
-                        if self._build_dict:
-                            header = next(csv.reader([line]))
+                        header = next(csv.reader([line]))
+                        reverse_header = {}
+                        for i in range(len(header)):
+                            reverse_header[header[i]] = i
                     async for line in f:
                         parsed_line = next(csv.reader([line]))
                         element = parsed_line
@@ -186,22 +189,27 @@ class ReadCSV(Flow):
                         if header:
                             if len(parsed_line) != len(header):
                                 raise ValueError(f'CSV line with {len(parsed_line)} fields did not match header with {len(header)} fields')
-                            element = {}
-                            for i in range(len(parsed_line)):
-                                if self._build_dict:
+                            if self._build_dict:
+                                element = {}
+                                for i in range(len(parsed_line)):
                                     element[header[i]] = parsed_line[i]
-                                else:
+                            else:
+                                for i in range(len(parsed_line)):
                                     element[i] = parsed_line[i]
                         if self._key_field:
-                            key = element[self._key_field]
-                            del element[self._key_field]
+                            key_field = self._key_field
+                            if reverse_header and isinstance(key_field, str):
+                                key_field = reverse_header[key_field]
+                            key = parsed_line[key_field]
                         if self._timestamp_field:
-                            timestamp_str = element[self._timestamp_field]
+                            timestamp_field = self._timestamp_field
+                            if reverse_header and isinstance(timestamp_field, str):
+                                timestamp_field = reverse_header[timestamp_field]
+                            timestamp_str = parsed_line[timestamp_field]
                             if self._timestamp_format:
                                 timestamp = datetime.strptime(timestamp_str, self._timestamp_format)
                             else:
                                 timestamp = datetime.fromisoformat(timestamp_str)
-                            del element[self._timestamp_field]
                         else:
                             timestamp = datetime.now()
                         await self._do_downstream(Event(element, key, timestamp, None))

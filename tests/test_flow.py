@@ -74,8 +74,21 @@ def test_csv_reader_as_dict_with_key_and_timestamp():
     ]).run()
 
     termination_result = controller.await_termination()
-    expected = [{'key': 'm1', 'time': datetime(2020, 2, 15, 2, 0), 'data': {'v': '8'}},
-                {'key': 'm2', 'time': datetime(2020, 2, 16, 2, 0), 'data': {'v': '14'}}]
+    expected = [{'key': 'm1', 'time': datetime(2020, 2, 15, 2, 0), 'data': {'k': 'm1', 't': '15/02/2020 02:00:00', 'v': '8'}},
+                {'key': 'm2', 'time': datetime(2020, 2, 16, 2, 0), 'data': {'k': 'm2', 't': '16/02/2020 02:00:00', 'v': '14'}}]
+    assert termination_result == expected
+
+
+def test_csv_reader_with_key_and_timestamp():
+    controller = build_flow([
+        ReadCSV('tests/test-with-timestamp.csv', with_header=True, key_field='k',
+                timestamp_field='t', timestamp_format='%d/%m/%Y %H:%M:%S'),
+        Reduce([], append_and_return, reify_metadata=True),
+    ]).run()
+
+    termination_result = controller.await_termination()
+    expected = [{'key': 'm1', 'time': datetime(2020, 2, 15, 2, 0), 'data': ['m1', '15/02/2020 02:00:00', '8']},
+                {'key': 'm2', 'time': datetime(2020, 2, 16, 2, 0), 'data': ['m2', '16/02/2020 02:00:00', '14']}]
     assert termination_result == expected
 
 
