@@ -183,13 +183,12 @@ class ReadCSV(Flow):
                         parsed_line = next(csv.reader([line]))
                         element = parsed_line
                         key = None
-                        timestamp = None
                         if header:
                             if len(parsed_line) != len(header):
                                 raise ValueError(f'CSV line with {len(parsed_line)} fields did not match header with {len(header)} fields')
                             element = {}
                             for i in range(len(parsed_line)):
-                                if header:
+                                if self._build_dict:
                                     element[header[i]] = parsed_line[i]
                                 else:
                                     element[i] = parsed_line[i]
@@ -203,7 +202,7 @@ class ReadCSV(Flow):
                             else:
                                 timestamp = datetime.fromisoformat(timestamp_str)
                             del element[self._timestamp_field]
-                        if not timestamp:
+                        else:
                             timestamp = datetime.now()
                         await self._do_downstream(Event(element, key, timestamp, None))
             termination_result = await self._do_downstream(_termination_obj)
