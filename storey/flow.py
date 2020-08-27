@@ -154,12 +154,16 @@ class Source(Flow):
 
 
 class ReadCSV(Flow):
-    def __init__(self, paths, skip_header=False, **kwargs):
+    def __init__(self, paths, with_header=False, build_dict=False, key_field=None, timestamp_field=None, timestamp_format=None, **kwargs):
         super().__init__(**kwargs)
         if isinstance(paths, str):
             paths = [paths]
         self._paths = paths
-        self._skip_header = skip_header
+        self._with_header = with_header
+        self._build_dict = build_dict
+        self._key_field = key_field
+        self._timestamp_field = timestamp_field
+        self._timestamp_format = timestamp_format
 
         self._termination_q = queue.Queue(1)
         self._ex = None
@@ -170,11 +174,38 @@ class ReadCSV(Flow):
         try:
             for path in self._paths:
                 async with aiofiles.open(path, mode='r') as f:
-                    if self._skip_header:
-                        await f.readline()
+                    header = None
+                    if self._with_header:
+                        line = await f.readline()
+                        if self._build_dict:
+                            header = next(csv.reader([line]))
                     async for line in f:
                         parsed_line = next(csv.reader([line]))
-                        await self._do_downstream(Event(parsed_line, None, datetime.now(), None))
+                        element = parsed_line
+                        key = None
+                        timestamp = None
+                        if header:
+                            if len(parsed_line) != len(header):
+                                raise ValueError(f'CSV line with {len(parsed_line)} fields did not match header with {len(header)} fields')
+                            element = {}
+                            for i in range(len(parsed_line)):
+                                if header:
+                                    element[header[i]] = parsed_line[i]
+                                else:
+                                    element[i] = parsed_line[i]
+                        if self._key_field:
+                            key = element[self._key_field]
+                            del element[self._key_field]
+                        if self._timestamp_field:
+                            timestamp_str = element[self._timestamp_field]
+                            if self._timestamp_format:
+                                timestamp = datetime.strptime(timestamp_str, self._timestamp_format)
+                            else:
+                                timestamp = datetime.fromisoformat(timestamp_str)
+                            del element[self._timestamp_field]
+                        if not timestamp:
+                            timestamp = datetime.now()
+                        await self._do_downstream(Event(element, key, timestamp, None))
             termination_result = await self._do_downstream(_termination_obj)
             self._termination_future.set_result(termination_result)
         except BaseException as ex:
@@ -288,13 +319,14 @@ class Complete(Flow):
 
 
 class Reduce(Flow):
-    def __init__(self, inital_value, fn):
+    def __init__(self, inital_value, fn, reify_metadata=False):
         super().__init__()
         if not callable(fn):
             raise TypeError(f'Expected a callable, got {type(fn)}')
         self._is_async = asyncio.iscoroutinefunction(fn)
         self._fn = fn
         self._result = inital_value
+        self._reify_metadata = reify_metadata
 
     def to(self, outlet):
         raise ValueError("Reduce is a terminal step. It cannot be piped further.")
@@ -303,8 +335,10 @@ class Reduce(Flow):
         if event is _termination_obj:
             return self._result
         else:
-            element = event.element
-            res = self._fn(self._result, element)
+            elem = event.element
+            if self._reify_metadata:
+                elem = {'key': event.key, 'time': event.time, 'data': event.element}
+            res = self._fn(self._result, elem)
             if self._is_async:
                 res = await res
             self._result = res
