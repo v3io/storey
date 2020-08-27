@@ -168,6 +168,11 @@ class ReadCSV(Flow):
         self._termination_q = queue.Queue(1)
         self._ex = None
 
+        if not with_header and isinstance(key_field, str):
+            raise ValueError('key_field can only be set to an integer when with_header is false')
+        if not with_header and isinstance(timestamp_field, str):
+            raise ValueError('timestamp_field can only be set to an integer when with_header is false')
+
     async def _run_loop(self):
         self._termination_future = asyncio.futures.Future()
 
@@ -175,13 +180,13 @@ class ReadCSV(Flow):
             for path in self._paths:
                 async with aiofiles.open(path, mode='r') as f:
                     header = None
-                    reverse_header = None
+                    field_name_to_index = None
                     if self._with_header:
                         line = await f.readline()
                         header = next(csv.reader([line]))
-                        reverse_header = {}
+                        field_name_to_index = {}
                         for i in range(len(header)):
-                            reverse_header[header[i]] = i
+                            field_name_to_index[header[i]] = i
                     async for line in f:
                         parsed_line = next(csv.reader([line]))
                         element = parsed_line
@@ -194,17 +199,16 @@ class ReadCSV(Flow):
                                 for i in range(len(parsed_line)):
                                     element[header[i]] = parsed_line[i]
                             else:
-                                for i in range(len(parsed_line)):
-                                    element[i] = parsed_line[i]
+                                element = parsed_line
                         if self._key_field:
                             key_field = self._key_field
-                            if reverse_header and isinstance(key_field, str):
-                                key_field = reverse_header[key_field]
+                            if self._with_header and isinstance(key_field, str):
+                                key_field = field_name_to_index[key_field]
                             key = parsed_line[key_field]
                         if self._timestamp_field:
                             timestamp_field = self._timestamp_field
-                            if reverse_header and isinstance(timestamp_field, str):
-                                timestamp_field = reverse_header[timestamp_field]
+                            if self._with_header and isinstance(timestamp_field, str):
+                                timestamp_field = field_name_to_index[timestamp_field]
                             timestamp_str = parsed_line[timestamp_field]
                             if self._timestamp_format:
                                 timestamp = datetime.strptime(timestamp_str, self._timestamp_format)
