@@ -198,8 +198,6 @@ class ReadCSV(Flow):
                                 element = {}
                                 for i in range(len(parsed_line)):
                                     element[header[i]] = parsed_line[i]
-                            else:
-                                element = parsed_line
                         if self._key_field:
                             key_field = self._key_field
                             if self._with_header and isinstance(key_field, str):
