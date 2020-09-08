@@ -262,9 +262,7 @@ def test_error_async_flow():
 
 
 def test_choice():
-    small_reduce = build_flow([
-        Reduce(0, lambda acc, x: acc + x)
-    ])
+    small_reduce = Reduce(0, lambda acc, x: acc + x)
 
     big_reduce = build_flow([
         Map(lambda x: x * 100),
