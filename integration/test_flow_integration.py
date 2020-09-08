@@ -70,7 +70,7 @@ def test_join_with_v3io_table():
         Source(),
         Map(lambda x: x + 1),
         Filter(lambda x: x < 8),
-        JoinWithV3IOTable(lambda x: x.element, lambda x, y: y['secret'], table_path),
+        JoinWithV3IOTable(lambda x: x.body, lambda x, y: y['secret'], table_path),
         Reduce(0, lambda x, y: x + y)
     ]).run()
     for i in range(10):
