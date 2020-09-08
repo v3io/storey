@@ -103,7 +103,7 @@ def test_write_to_v3io_stream():
     controller = build_flow([
         Source(),
         Map(lambda x: str(x)),
-        WriteToV3IOStream(stream_path, sharding_func=lambda event: int(event.element))
+        WriteToV3IOStream(stream_path, sharding_func=lambda event: int(event.body))
     ]).run()
     for i in range(10):
         controller.emit(i)
